@@ -50,6 +50,8 @@ mkdir -p "$INSTALL_DIR/compose" "$INSTALL_DIR/observability" "$INSTALL_DIR/scrip
 cp -r "$REPO_ROOT/compose/docker-compose.yml" "$REPO_ROOT/compose/.env.example" "$INSTALL_DIR/compose/"
 cp -r "$REPO_ROOT/observability/." "$INSTALL_DIR/observability/"
 cp -r "$REPO_ROOT/scripts/." "$INSTALL_DIR/scripts/"
+# Files copied from Windows lose their "executable" flag, so set it explicitly.
+chmod +x "$INSTALL_DIR"/scripts/*.sh "$INSTALL_DIR"/scripts/aws/*.sh "$INSTALL_DIR"/scripts/k8s/*.sh
 
 ENV_FILE="$INSTALL_DIR/compose/.env"
 if [[ -f "$ENV_FILE" ]]; then
