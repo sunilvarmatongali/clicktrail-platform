@@ -6,10 +6,13 @@
 #   bash scripts/aws/bootstrap-ec2.sh <public-address-of-the-vm>
 #
 # It does four things:
-#   1. installs Docker, the Compose plugin, jq and curl,
+#   1. installs Docker, the Compose plugin, jq, curl and the AWS CLI,
 #   2. adds a small swap file (a safety net on small machines),
 #   3. creates /opt/clicktrail with the stack files,
-#   4. creates compose/.env with RANDOM secrets (only if it does not exist yet).
+#   4. creates compose/config.env with the NON-secret settings.
+#
+# It does NOT create any password or key. Secrets live in AWS Secrets Manager (secret "clicktrail/prod") and are read at
+# deploy time by scripts/aws/deploy.sh through the instance role. See docs/aws-deploy-setup.md, section "Secrets".
 
 set -euo pipefail
 
@@ -32,6 +35,9 @@ if ! command -v docker > /dev/null; then
   sudo apt-get install -y docker.io docker-compose-v2 jq curl
   sudo systemctl enable --now docker
 fi
+if ! command -v aws > /dev/null; then
+  sudo snap install aws-cli --classic
+fi
 sudo usermod -aG docker "$USER"
 
 echo "==> Making sure there is some swap"
@@ -51,33 +57,23 @@ cp -r "$REPO_ROOT/compose/docker-compose.yml" "$REPO_ROOT/compose/.env.example" 
 cp -r "$REPO_ROOT/observability/." "$INSTALL_DIR/observability/"
 cp -r "$REPO_ROOT/scripts/." "$INSTALL_DIR/scripts/"
 # Files copied from Windows lose their "executable" flag, so set it explicitly.
-chmod +x "$INSTALL_DIR"/scripts/*.sh "$INSTALL_DIR"/scripts/aws/*.sh "$INSTALL_DIR"/scripts/k8s/*.sh
+find "$INSTALL_DIR/scripts" -name '*.sh' -exec chmod +x {} +
 
-ENV_FILE="$INSTALL_DIR/compose/.env"
-if [[ -f "$ENV_FILE" ]]; then
-  echo "==> ${ENV_FILE} already exists, keeping it (delete it to generate new secrets)"
+CONFIG_FILE="$INSTALL_DIR/compose/config.env"
+if [[ -f "$CONFIG_FILE" ]]; then
+  echo "==> ${CONFIG_FILE} already exists, keeping it"
 else
-  echo "==> Creating ${ENV_FILE} with random secrets"
-  random() { openssl rand -hex "$1"; }
-  umask 077
-  cat > "$ENV_FILE" << EOF
+  echo "==> Creating ${CONFIG_FILE} (non-secret settings only)"
+  cat > "$CONFIG_FILE" << EOF
 GITHUB_OWNER=sunilvarmatongali
 CLICKTRAIL_VERSION=0.1.0
 PUBLIC_BASE_URL=http://${PUBLIC_ADDRESS}:8080
-MYSQL_ROOT_PASSWORD=$(random 16)
-MYSQL_PASSWORD=$(random 16)
-POSTGRES_PASSWORD=$(random 16)
-JWT_SECRET=$(random 32)
-GRAFANA_ADMIN_PASSWORD=$(random 12)
-ADMIN_EMAIL=admin@clicktrail.example.com
-ADMIN_PASSWORD=$(random 12)
 EOF
-  echo "    The generated admin login and Grafana password are inside ${ENV_FILE}"
 fi
 
 echo
 echo "Done. Next steps:"
-echo "  1. Log out and back in once, so your user may run docker without sudo."
-echo "  2. Log in to the image registry (the images are private):"
-echo "       echo <github-token-with-read:packages> | docker login ghcr.io -u <github-user> --password-stdin"
+echo "  1. Create the secret 'clicktrail/prod' in AWS Secrets Manager and let the instance role read it"
+echo "     (docs/aws-deploy-setup.md, section 'Secrets')."
+echo "  2. Log out and back in once, so your user may run docker without sudo."
 echo "  3. Start the stack:   bash ${INSTALL_DIR}/scripts/aws/deploy.sh 0.1.0"

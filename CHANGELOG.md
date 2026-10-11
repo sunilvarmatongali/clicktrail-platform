@@ -4,6 +4,17 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com) and the project uses
 [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+- Secrets are read from AWS Secrets Manager (`clicktrail/prod`) at every deployment through the instance role (ADR 0006).
+  `render-env.sh` validates the secret and builds the `.env`; its rules are covered by automated tests that run in CI.
+- `export-secrets-json.sh` helps migrate an existing server without changing any password.
+
+### Changed
+- `bootstrap-ec2.sh` no longer generates passwords. It creates `config.env` (non-secret settings) and installs the AWS CLI.
+- `deploy.sh` splits settings into `config.env` (non-secret) and the secret, and can log in to the image registry using credentials from the secret.
+
 ## [0.1.2] - 2026-10-11
 
 ### Changed

@@ -17,7 +17,10 @@ jobs:
           fetch-depth: 0 # the secret scanner reads the whole history
 
       - name: Shell scripts are correct (shellcheck)
-        run: shellcheck scripts/*.sh scripts/aws/*.sh scripts/k8s/*.sh
+        run: shellcheck scripts/*.sh scripts/aws/*.sh scripts/k8s/*.sh scripts/tests/*.sh
+
+      - name: Secret handling logic is tested (rejects bad or missing secrets)
+        run: bash scripts/tests/render-env-test.sh
 
       - name: Docker Compose file is valid
         run: |

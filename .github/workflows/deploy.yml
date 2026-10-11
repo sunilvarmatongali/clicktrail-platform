@@ -93,6 +93,7 @@ jobs:
             commands: [
               "[ -n \"$BASH_VERSION\" ] || exec /bin/bash \"$0\" \"$@\"",
               "set -euo pipefail",
+              "command -v aws > /dev/null || snap install aws-cli --classic",
               "curl -fsS -o /tmp/clicktrail-bundle.tgz \($url | @sh)",
               "echo \(($sha + "  /tmp/clicktrail-bundle.tgz") | @sh) | sha256sum -c -",
               "mkdir -p /opt/clicktrail",

@@ -40,13 +40,14 @@ and runs the smoke test against `http://localhost:8080`.
    2.5 GB. A free-tier t3.micro (1 GB) cannot run it. Check the current price of the instance type before you start.
 2. **Security group** (inbound rules): `22` from **your IP only**, `8080` from anywhere. Nothing else.
 3. **Elastic IP** (optional but handy): keeps the address stable across stop/start.
-4. Copy this repository to the VM and run the bootstrap (it installs Docker, creates `/opt/clicktrail` and generates random secrets):
+4. Copy this repository to the VM and run the bootstrap (it installs Docker and the AWS CLI, creates `/opt/clicktrail` and the
+   non-secret `config.env`; it creates **no** passwords):
    ```bash
    scp -r clicktrail-platform ubuntu@<vm-address>:~/
    ssh ubuntu@<vm-address> 'bash ~/clicktrail-platform/scripts/aws/bootstrap-ec2.sh <vm-address>'
    ```
-5. Log out and in once (Docker group), then log in to the registry on the VM:
-   `echo <token> | docker login ghcr.io -u <github-user> --password-stdin`
+5. **Secrets**: create the secret `clicktrail/prod` in AWS Secrets Manager and allow the instance role to read it
+   ([aws-deploy-setup.md](aws-deploy-setup.md), section 6). Deployments read it themselves, including the image-registry token if you store it there.
 6. **GitHub deployment access** (one time): follow [aws-deploy-setup.md](aws-deploy-setup.md). It creates a static address
    (Elastic IP), a small S3 bucket, an instance role for AWS Systems Manager and a key-less, short-lived AWS role for GitHub (OIDC).
    The result: **no SSH, no keys and no secrets in GitHub**, only four non-secret repository variables.
@@ -95,11 +96,16 @@ disk and for an unattached Elastic IP. Remove what you do not need.
 | Everything gets `429` | The client address sent too many requests; wait one minute |
 | Login works but admin gets `403` | You are logged in as a normal user; the admin account is the one in `ADMIN_EMAIL` |
 | Smoke test fails at step 0 | Stack not ready yet; wait and run it again |
-| Short links show `localhost` | `PUBLIC_BASE_URL` in `.env` is wrong; set it to the public address and restart url-service |
+| Short links show `localhost` | `PUBLIC_BASE_URL` in `config.env` is wrong; set it to the public address and deploy again (or restart url-service) |
+| Deployment fails: "AccessDenied" reading the secret | The instance role lacks the `clicktrail-read-secret` policy, or the secret name or region differs |
+| Deployment fails: "the secret has no value for ..." or "characters that are not allowed" | The secret is incomplete or contains a character outside the allowed set (see section 6.1 of the setup guide) |
 
 ## 6. Security housekeeping
 
-- Never commit `.env`. Rotate a secret by changing it in `.env` and restarting the affected services (changing `JWT_SECRET`
-  logs everyone out; it must be identical for the auth service and the gateway, which `.env` guarantees).
+- On AWS the secrets live in **AWS Secrets Manager** (`clicktrail/prod`). Never edit `/opt/clicktrail/compose/.env` by hand: it is rebuilt at every
+  deployment. To change a secret, change it in Secrets Manager and run the deploy workflow again (see [aws-deploy-setup.md](aws-deploy-setup.md), section 6.4).
+  Changing `JWT_SECRET` logs everyone out; it is identical for the auth service and the gateway because both read the same secret.
+- Non-secret settings (versions, public address) are in `/opt/clicktrail/compose/config.env`.
+- For local use outside AWS you still write a `.env` by hand from `.env.example` (never commit it).
 - The databases keep their original passwords in their volumes. To change those, change them inside the database first.
 - Keep the instance patched: `sudo apt-get update && sudo apt-get upgrade`.
