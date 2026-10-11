@@ -141,13 +141,24 @@ appears in the statistics after a short delay (seconds).
 | **url-service down** | Link APIs and redirects return `502` | The gateway answers with the standard error body and a trace ID; auth and statistics keep working |
 | **gateway instance down** | Outage on a single VM | On Kubernetes there are 2 replicas and a disruption budget |
 
-Mechanisms to name: timeouts on every call (3 s for gRPC and the ownership check, 3 s connect and 10 s response for proxying), health and
+Mechanisms to name: **retries with jitter and a circuit breaker per downstream service** (see below), timeouts on every call (3 s for gRPC and the ownership check, 3 s connect and 10 s response for proxying), health and
 readiness probes (`/healthz` restarts, `/readyz` removes from traffic), graceful shutdown (finish running requests on SIGTERM), startup
 retries for databases, and structured logs with a request ID.
 
-**Be honest about what is not there:** there are **no automatic retries or circuit breakers** on the synchronous calls yet. A failing
-dependency returns a fast `502` (thanks to timeouts) instead of hanging, but a production system would add retries with jitter for idempotent
-calls and a circuit breaker so a struggling service is not hammered.
+**Retries and the circuit breaker (built into the gateway, one per downstream service):**
+- Reads are retried **once** after a temporary failure (network error, 502/503/504, gRPC Unavailable), after a random "jitter" pause so many gateways do not retry together.
+  **Writes are never retried** (register, login, create link), because repeating them could do them twice.
+- **Circuit breaker**, like a fuse: after 5 failures in a row the circuit **opens** for 10 seconds. Calls are refused at once with `503` and a `Retry-After` header, the failing service
+  is left alone to recover, and users do not wait for timeouts. Then one **trial** call is let through (half-open): success closes the circuit, failure reopens it.
+- A normal "no" (404, 400, InvalidArgument) is a healthy answer and never opens the circuit.
+- One circuit per service means **isolation**: when auth is cut off, redirects and statistics keep working.
+- Metrics: `circuit_breaker_state`, `circuit_breaker_rejected_total`, `upstream_retries_total`, shown on the Grafana dashboard.
+
+**A true story to tell:** I stopped the auth service on the real server on purpose. The first 5 logins returned 502, the 6th and 7th returned `503` with `Retry-After: 11`
+in about 50 ms, redirects kept working, and after I restarted auth the first trial call closed the circuit. The metrics showed it.
+
+**What is still not there:** a bulkhead (a hard limit on concurrent calls per service), a fallback answer (for example cached statistics while analytics is down),
+a retry budget, and the circuit state is per gateway instance (not shared between copies).
 
 ---
 
@@ -206,7 +217,7 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 1. **Remove the .env file entirely.** Secrets come from Secrets Manager already, but services still receive them as environment variables from a rendered file. Next: each service reads its secret at start-up (or, on Kubernetes, the External Secrets Operator), and automatic rotation with managed RDS.
 2. **TLS and a domain.** Put an HTTPS load balancer (ACM certificate) or a reverse proxy in front of the gateway; add TLS or mTLS between services.
 3. **Managed data stores with backups.** RDS (MySQL/PostgreSQL), DocumentDB or Atlas, ElastiCache, MSK, multi-AZ.
-4. **Resilience patterns.** Retries with jitter, circuit breakers, bulkheads on synchronous calls.
+4. **More resilience patterns.** Circuit breakers and jittered retries exist; add bulkheads, fallbacks and a shared retry budget.
 5. **Transactional outbox** for click events (exact delivery instead of best effort), and a dead-letter topic.
 6. **Asymmetric JWT (RS256)** so only the auth service holds the signing key; refresh tokens and revocation.
 7. **Run Kubernetes for real** (EKS or a managed cluster) with an ingress, autoscaling and GitOps.
@@ -227,6 +238,10 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 **How do you avoid counting a click twice?** At-least-once delivery plus an idempotent consumer: the event ID is the MongoDB `_id`, a duplicate insert is ignored.
 
 **What if Kafka is down when someone clicks?** The redirect still works; that click event is lost (best effort). The fix for exact delivery is a transactional outbox.
+
+**What is a circuit breaker and why did you use one?** It stops calling a service that keeps failing, so users get an immediate `503` instead of waiting for a timeout, and the service can recover. It has three states: closed (normal), open (calls refused for 10 s) and half-open (one trial call). I used `sony/gobreaker` behind a small wrapper in the gateway, one per downstream service, and I proved it by stopping a service on the real server.
+
+**Why do you not retry every call?** Retrying a write (create link, login) could do it twice. Only reads are retried, once, with a random pause (jitter) so that many gateways do not retry at the same time.
 
 **What if analytics is down?** Statistics return 502. Clicks keep accumulating in Kafka and are counted when it returns.
 
@@ -265,6 +280,6 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 
 - That it ran on Kubernetes in production (it ran on EC2 with Docker Compose; the manifests are validated, not run on a cluster).
 - Multi-region, high availability, backups or managed databases (single node, demo setup).
-- Zero-downtime deploys, distributed tracing, circuit breakers or retries (not built).
+- Zero-downtime deploys, distributed tracing, bulkheads or fallbacks (not built). Circuit breakers and retries with jitter **are** built into the gateway.
 - "Exactly-once" anything (it is at-least-once with idempotency).
 - Real users or traffic (it is a portfolio project; the numbers come from tests and a 300,000-row benchmark).

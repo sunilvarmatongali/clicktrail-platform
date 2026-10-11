@@ -381,6 +381,85 @@
 
                                                          ]
                                        }
+                   },
+                   {
+                       "id":  11,
+                       "title":  "Circuit breaker state (0 closed, 1 half-open, 2 open)",
+                       "type":  "timeseries",
+                       "description":  "One line per downstream service. 2 means the gateway has cut the service off for a few seconds because it kept failing.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  36,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "circuit_breaker_state",
+                                           "legendFormat":  "{{name}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "none"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  12,
+                       "title":  "Refused calls and retries",
+                       "type":  "timeseries",
+                       "description":  "refused = calls answered at once with 503 because the circuit was open. retries = extra attempts after a temporary failure.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  12,
+                                       "y":  36,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (name) (rate(circuit_breaker_rejected_total[1m]))",
+                                           "legendFormat":  "refused {{name}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "sum by (name) (rate(upstream_retries_total[1m]))",
+                                           "legendFormat":  "retries {{name}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
                    }
                ]
 }

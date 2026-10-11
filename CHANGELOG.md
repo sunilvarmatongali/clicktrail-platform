@@ -4,6 +4,12 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com) and the project uses
 [Semantic Versioning](https://semver.org).
 
+## [0.2.1] - 2026-10-11
+
+### Added
+- Grafana panels "Circuit breaker state" and "Refused calls and retries" for the new gateway resilience metrics.
+- Runbook and architecture notes for the circuit breaker (`503` with `Retry-After`).
+
 ## [0.2.0] - 2026-10-11
 
 ### Added

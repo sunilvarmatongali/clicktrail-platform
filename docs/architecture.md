@@ -101,7 +101,7 @@ A service never reads another service's database. It asks the service over its A
 | Redis down | Redirects still work (database); rate limiter fails open |
 | Kafka down | Redirects still work; click events are lost while it is down (best effort) |
 | MongoDB down | Consumer retries with backoff; nothing is acknowledged until stored; lag grows and is visible |
-| A service down | Gateway answers `502` with a trace ID; other routes keep working |
+| A service down | The first failures get a `502` with a trace ID. After 5 failures in a row the gateway **opens that service's circuit breaker** for 10 seconds: calls are refused at once with `503` and a `Retry-After` header, and the service is left alone to recover. Other services and routes keep working (one breaker per service). Safe reads are retried once with jitter first; writes never |
 | A message is delivered twice | Stored once (event ID is the MongoDB `_id`) |
 
 ## Known limitations (honest list)

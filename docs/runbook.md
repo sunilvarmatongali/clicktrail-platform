@@ -93,6 +93,7 @@ disk and for an unattached Elastic IP. Remove what you do not need.
 | Service keeps restarting | `docker compose logs <service>`: the first lines show which setting is wrong |
 | `/r/<code>` returns 502 | url-service is down; `docker compose ps` and check its logs |
 | Clicks do not appear in statistics | `docker compose logs analytics-service`; check the Kafka lag panel in Grafana |
+| Requests get `503` with a `Retry-After` header | The gateway's circuit breaker for a failing service is open. Find the service in the metric `circuit_breaker_state{name=...}` (2 = open), check its logs, and fix or restart it; the circuit closes by itself after a successful trial call |
 | Everything gets `429` | The client address sent too many requests; wait one minute |
 | Login works but admin gets `403` | You are logged in as a normal user; the admin account is the one in `ADMIN_EMAIL` |
 | Smoke test fails at step 0 | Stack not ready yet; wait and run it again |
