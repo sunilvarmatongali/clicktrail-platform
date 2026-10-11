@@ -1,0 +1,74 @@
+# MySQL for the auth service. One instance with temporary storage: a DEMO setup (data is lost when the pod is
+# deleted). A production setup would use a managed database such as Amazon RDS.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/part-of: clicktrail
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mysql
+        app.kubernetes.io/part-of: clicktrail
+        app.kubernetes.io/component: database
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          args: ["--innodb-buffer-pool-size=64M", "--performance-schema=OFF", "--max-connections=50"]
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MYSQL_DATABASE
+              value: auth
+            - name: MYSQL_USER
+              value: clicktrail
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: mysql-password }
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: mysql-root-password }
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD --silent"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/part-of: clicktrail
+spec:
+  selector:
+    app.kubernetes.io/name: mysql
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql

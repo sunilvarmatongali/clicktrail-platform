@@ -1,0 +1,72 @@
+# PostgreSQL for the URL service. DEMO setup: one instance, temporary storage (see mysql.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: clicktrail
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: clicktrail
+        app.kubernetes.io/component: database
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: postgres
+          image: postgres:16
+          args: ["-c", "shared_buffers=64MB", "-c", "max_connections=50"]
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: links
+            - name: POSTGRES_USER
+              value: clicktrail
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: postgres-password }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "clicktrail", "-d", "links"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: clicktrail
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

@@ -1,0 +1,53 @@
+# Kustomize assembles all manifests into one deployable set.
+#
+#   kubectl kustomize k8s --load-restrictor LoadRestrictionsNone | kubectl apply -f -
+#
+# (LoadRestrictionsNone is needed because the Prometheus and Grafana files are shared with Docker Compose and
+#  live outside this folder, in ../observability.)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: clicktrail
+
+resources:
+  - namespace.yaml
+  - infra/mysql.yaml
+  - infra/postgres.yaml
+  - infra/mongo.yaml
+  - infra/redis.yaml
+  - infra/kafka.yaml
+  - apps/auth-service.yaml
+  - apps/url-service.yaml
+  - apps/analytics-service.yaml
+  - apps/gateway.yaml
+  - observability/prometheus.yaml
+  - observability/grafana.yaml
+  - network-policies.yaml
+
+# Which release to run. Change a version here (or with `kustomize edit set image`) to upgrade one service.
+images:
+  - name: ghcr.io/sunilvarmatongali/clicktrail-gateway
+    newTag: 0.1.0
+  - name: ghcr.io/sunilvarmatongali/clicktrail-auth-service
+    newTag: 0.1.0
+  - name: ghcr.io/sunilvarmatongali/clicktrail-url-service
+    newTag: 0.1.0
+  - name: ghcr.io/sunilvarmatongali/clicktrail-analytics-service
+    newTag: 0.1.0
+
+configMapGenerator:
+  - name: clicktrail-config
+    literals:
+      - public-base-url=http://localhost:8080
+  - name: prometheus-config
+    files:
+      - prometheus.yml=../observability/prometheus/prometheus.yml
+  - name: grafana-datasources
+    files:
+      - prometheus.yml=../observability/grafana/provisioning/datasources/prometheus.yml
+  - name: grafana-dashboard-provider
+    files:
+      - clicktrail.yml=../observability/grafana/provisioning/dashboards/clicktrail.yml
+  - name: grafana-dashboards
+    files:
+      - clicktrail-overview.json=../observability/grafana/dashboards/clicktrail-overview.json

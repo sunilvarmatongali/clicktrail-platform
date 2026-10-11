@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: url-service
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: url-service
+    app.kubernetes.io/part-of: clicktrail
+    app.kubernetes.io/component: application
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: url-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: url-service
+        app.kubernetes.io/part-of: clicktrail
+        app.kubernetes.io/component: application
+    spec:
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: url-service
+          image: ghcr.io/sunilvarmatongali/clicktrail-url-service:0.1.0
+          ports:
+            - name: http
+              containerPort: 8082
+          env:
+            - name: URL_HTTP_PORT
+              value: "8082"
+            - name: URL_DATABASE_DSN
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: url-database-dsn }
+            - name: URL_REDIS_ADDRESS
+              value: redis:6379
+            - name: URL_KAFKA_BROKERS
+              value: kafka:9092
+            - name: URL_KAFKA_TOPIC
+              value: clicktrail.link-clicked.v1
+            - name: URL_PUBLIC_BASE_URL
+              valueFrom:
+                configMapKeyRef: { name: clicktrail-config, key: public-base-url }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-service
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: url-service
+    app.kubernetes.io/part-of: clicktrail
+spec:
+  type: ClusterIP # reachable only inside the cluster
+  selector:
+    app.kubernetes.io/name: url-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http

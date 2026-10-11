@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clicktrail
+  labels:
+    app.kubernetes.io/part-of: clicktrail
+    # Kubernetes refuses pods that break the "restricted" security rules (no root, no extra rights, ...).
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted

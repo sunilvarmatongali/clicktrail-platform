@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/part-of: clicktrail
+    app.kubernetes.io/component: application
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-service
+        app.kubernetes.io/part-of: clicktrail
+        app.kubernetes.io/component: application
+    spec:
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: auth-service
+          image: ghcr.io/sunilvarmatongali/clicktrail-auth-service:0.1.0
+          ports:
+            - name: http
+              containerPort: 8081
+          env:
+            - name: AUTH_HTTP_PORT
+              value: "8081"
+            - name: AUTH_DATABASE_DSN
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: auth-database-dsn }
+            - name: AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: jwt-secret }
+            - name: AUTH_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: admin-email }
+            - name: AUTH_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: clicktrail-secrets, key: admin-password }
+          # The same port serves the API and the probes in this service.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/part-of: clicktrail
+spec:
+  type: ClusterIP # reachable only inside the cluster
+  selector:
+    app.kubernetes.io/name: auth-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http

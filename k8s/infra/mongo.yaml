@@ -1,0 +1,62 @@
+# MongoDB for the analytics service. DEMO setup: one instance, temporary storage (see mysql.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/part-of: clicktrail
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongo
+        app.kubernetes.io/part-of: clicktrail
+        app.kubernetes.io/component: database
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: mongo
+          image: mongo:7
+          args: ["--wiredTigerCacheSizeGB", "0.25"]
+          ports:
+            - name: mongo
+              containerPort: 27017
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: clicktrail
+  labels:
+    app.kubernetes.io/name: mongo
+    app.kubernetes.io/part-of: clicktrail
+spec:
+  selector:
+    app.kubernetes.io/name: mongo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: mongo

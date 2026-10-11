@@ -1,0 +1,13 @@
+# A local Kubernetes cluster for testing (kind = "Kubernetes in Docker").
+#   kind create cluster --config k8s/kind-cluster.yaml
+# The gateway Service uses NodePort 30080; this maps it to http://localhost:8080 on your machine.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: clicktrail
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        listenAddress: "127.0.0.1"
+        protocol: TCP
