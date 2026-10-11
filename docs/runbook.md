@@ -47,9 +47,10 @@ and runs the smoke test against `http://localhost:8080`.
    ```
 5. Log out and in once (Docker group), then log in to the registry on the VM:
    `echo <token> | docker login ghcr.io -u <github-user> --password-stdin`
-6. **GitHub deployment access** (one time): follow [aws-oidc-setup.md](aws-oidc-setup.md). It creates a short-lived,
-   key-less AWS permission (OIDC) that lets the workflow open SSH for its own address only for the length of a deploy,
-   plus a few repository variables and three secrets (`EC2_SSH_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`).
+6. **GitHub deployment access** (one time): follow [aws-deploy-setup.md](aws-deploy-setup.md). It creates a static address
+   (Elastic IP), a small S3 bucket, an instance role for AWS Systems Manager and a key-less, short-lived AWS role for GitHub (OIDC).
+   The result: **no SSH, no keys and no secrets in GitHub**, only four non-secret repository variables.
+
 ### Every deployment
 
 Run the **deploy** workflow (Actions tab -> deploy -> Run workflow) and enter the version, for example `0.1.0`.
