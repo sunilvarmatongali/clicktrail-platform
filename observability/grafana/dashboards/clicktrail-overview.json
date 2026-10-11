@@ -1,0 +1,386 @@
+{
+    "uid":  "clicktrail-overview",
+    "title":  "ClickTrail Overview",
+    "tags":  [
+                 "clicktrail"
+             ],
+    "timezone":  "browser",
+    "schemaVersion":  39,
+    "version":  1,
+    "refresh":  "15s",
+    "time":  {
+                 "from":  "now-30m",
+                 "to":  "now"
+             },
+    "editable":  false,
+    "panels":  [
+                   {
+                       "id":  1,
+                       "title":  "Services up",
+                       "type":  "stat",
+                       "description":  "Number of services that Prometheus can reach. Expected: 4.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  0,
+                                       "w":  6,
+                                       "h":  4
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "count(up{job!=\"prometheus\"} == 1)",
+                                           "legendFormat":  "up",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "none"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ]
+                                                         }
+                                   }
+                   },
+                   {
+                       "id":  2,
+                       "title":  "Clicks stored (since start)",
+                       "type":  "stat",
+                       "description":  "Click events saved by the analytics service.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  6,
+                                       "y":  0,
+                                       "w":  6,
+                                       "h":  4
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(analytics_events_processed_total{result=\"stored\"})",
+                                           "legendFormat":  "stored",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "none"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "options":  {
+                                       "colorMode":  "value",
+                                       "graphMode":  "area",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ]
+                                                         }
+                                   }
+                   },
+                   {
+                       "id":  3,
+                       "title":  "Kafka consumer lag",
+                       "type":  "timeseries",
+                       "description":  "Click events waiting to be processed. A growing line means the analytics service is behind.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  12,
+                                       "y":  0,
+                                       "w":  12,
+                                       "h":  4
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "kafka_consumer_lag_messages",
+                                           "legendFormat":  "messages waiting",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "none"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  4,
+                       "title":  "HTTP requests per second",
+                       "type":  "timeseries",
+                       "description":  "Traffic of each HTTP service.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  4,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (service) (rate(http_requests_total[1m]))",
+                                           "legendFormat":  "{{service}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "reqps"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  5,
+                       "title":  "HTTP latency, 95th percentile",
+                       "type":  "timeseries",
+                       "description":  "95 percent of requests are faster than this.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  12,
+                                       "y":  4,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "histogram_quantile(0.95, sum by (le, service) (rate(http_request_duration_seconds_bucket[5m])))",
+                                           "legendFormat":  "{{service}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "s"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  6,
+                       "title":  "Server error ratio (5xx)",
+                       "type":  "timeseries",
+                       "description":  "Share of requests that failed on our side.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  12,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (service) (rate(http_requests_total{status=~\"5..\"}[5m])) / sum by (service) (rate(http_requests_total[5m]))",
+                                           "legendFormat":  "{{service}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percentunit"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  7,
+                       "title":  "Rate-limited requests (429)",
+                       "type":  "timeseries",
+                       "description":  "Requests the gateway refused because a client sent too many.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  12,
+                                       "y":  12,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(rate(http_requests_total{service=\"gateway\",status=\"429\"}[5m]))",
+                                           "legendFormat":  "blocked per second",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "reqps"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  8,
+                       "title":  "Click events by result",
+                       "type":  "timeseries",
+                       "description":  "stored = new click, duplicate = delivered twice and ignored, invalid = unreadable message skipped.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  20,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (result) (rate(analytics_events_processed_total[1m]))",
+                                           "legendFormat":  "{{result}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  9,
+                       "title":  "Link cache hit ratio",
+                       "type":  "timeseries",
+                       "description":  "Share of redirects answered from Redis instead of PostgreSQL.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  12,
+                                       "y":  20,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum(rate(link_cache_lookups_total{result=\"hit\"}[5m])) / sum(rate(link_cache_lookups_total[5m]))",
+                                           "legendFormat":  "hit ratio",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "percentunit"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  10,
+                       "title":  "gRPC calls to analytics",
+                       "type":  "timeseries",
+                       "description":  "Calls from the gateway to the analytics service.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  28,
+                                       "w":  24,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (method, code) (rate(grpc_requests_total[1m]))",
+                                           "legendFormat":  "{{method}} {{code}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "reqps"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   }
+               ]
+}
