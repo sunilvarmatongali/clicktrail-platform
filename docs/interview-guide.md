@@ -60,6 +60,7 @@ Prometheus scrapes all of them; Grafana draws the dashboard. Redis also holds th
 | Docker, Compose | runtime | Same image everywhere; Compose runs the whole stack on one VM |
 | Kubernetes (Kustomize) | manifests | The scalable path: probes, limits, hardened pods, network policies |
 | AWS EC2, SSM, S3, IAM OIDC | production | One VM; keyless deployment with an audit trail |
+| AWS Secrets Manager | secrets | One JSON secret read at deploy time through the instance role; central, audited, rotatable |
 | GitHub Actions | CI/CD | Per-repository pipelines and a manual deploy workflow |
 | Prometheus + Grafana | observability | Standard metrics pipeline and dashboard |
 
@@ -160,7 +161,7 @@ calls and a circuit breaker so a struggling service is not hammered.
 - **Containers**: non-root, read-only filesystem, no Linux capabilities, resource limits.
 - **Supply chain**: vulnerability scan (`govulncheck`) in every pipeline, Dependabot, secret scanning in the platform pipeline.
 - **Delivery security**: GitHub reaches AWS with OIDC (no stored keys); the role can only upload to one S3 folder and send a command to one instance.
-- **Secrets today**: random values generated on the VM into a `.env` with permissions 600, never in git. (See section 12 for the managed upgrade.)
+- **Secrets**: kept in **AWS Secrets Manager** (clicktrail/prod). Each deployment reads them with the instance role (a policy for that one secret only), validates them (required keys, safe characters, minimum JWT length; covered by automated tests) and renders an owner-only .env. Nothing secret is in git or in GitHub, and GitHub's deploy role cannot read the secret. Access is audited by CloudTrail.
 
 ## 9. Data and consistency
 
@@ -202,7 +203,7 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 
 ## 12. Trade-offs and what I would improve (say this proactively)
 
-1. **Secrets in a managed store.** Move secrets from a generated `.env` to AWS Secrets Manager (or Parameter Store): central, audited, rotatable, fetched at deploy time via an instance role.
+1. **Remove the .env file entirely.** Secrets come from Secrets Manager already, but services still receive them as environment variables from a rendered file. Next: each service reads its secret at start-up (or, on Kubernetes, the External Secrets Operator), and automatic rotation with managed RDS.
 2. **TLS and a domain.** Put an HTTPS load balancer (ACM certificate) or a reverse proxy in front of the gateway; add TLS or mTLS between services.
 3. **Managed data stores with backups.** RDS (MySQL/PostgreSQL), DocumentDB or Atlas, ElastiCache, MSK, multi-AZ.
 4. **Resilience patterns.** Retries with jitter, circuit breakers, bulkheads on synchronous calls.
@@ -235,6 +236,8 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 
 **How do you handle a leaked JWT?** Tokens live 15 minutes. There is no revocation list yet; I would add refresh tokens, short lifetimes and a deny list.
 
+**How do you manage secrets?** In AWS Secrets Manager, one JSON secret. The EC2 instance role may read only that secret. The deploy script fetches it, validates every value, and renders an owner-only .env; GitHub never sees any secret and its deploy role has no access to it. Changing a secret means editing it in Secrets Manager and redeploying. Limitations I would mention: password rotation is manual because the databases are containers (with managed RDS it is automatic), and the services still read environment variables.
+
 **How do you roll back?** Deploy the previous version numbers; images are immutable.
 
 **Zero-downtime deployment?** Not on the single VM: recreating the gateway container causes a short interruption. On Kubernetes, rolling updates with 2 replicas and a disruption budget give zero downtime. I would say it plainly.
@@ -256,7 +259,7 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 - Index result: **19.6 ms -> 0.07 ms** (about 270x) on 300,000 rows.
 - JWT lifetime 15 min; rate limits 120/min general and 10/min for login and register.
 - Kafka topic `clicktrail.link-clicked.v1` with 3 partitions; consumer retry backoff 0.5 s to 30 s.
-- 5 ADR-style decision records in the platform repo, 3 to 4 in each service.
+- 6 decision records (ADRs) in the platform repo, 3 to 4 in each service.
 
 ## 15. Do NOT claim
 

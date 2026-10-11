@@ -11,6 +11,7 @@
 | 4. First green pipelines | Done: `ci` is green on `main` in all six repositories, including the integration tests against real MySQL, PostgreSQL and MongoDB; the `release` workflows published the `0.1.0` images |
 | 5. Run it for real | Done on one EC2 VM (2026-10-11): all 12 containers healthy, `scripts/smoke-test.sh` 27 passed / 0 failed, internal ports checked closed from the internet. A gateway patch (`0.1.1`) was then deployed alone with `deploy.sh 0.1.0 gateway=0.1.1`. The GitHub **deploy** workflow has also run successfully (OIDC + SSM + S3, no SSH, no secrets): 27 checks passed on the VM and 36 from the public internet. Not yet run: the Kubernetes path on `kind` |
 | 6. Record the results | Done: real EXPLAIN numbers are in `clicktrail-url-service/docs/query-optimization.md` (19.6 ms -> 0.07 ms) |
+| Secrets | Done: secrets are read from AWS Secrets Manager (`clicktrail/prod`) at every deployment; verified on the server (27 + 36 checks passed, no secret in any log) |
 | 7. Afterwards | Not yet |
 
 Dependabot opened pull requests for newer versions of GitHub Actions and libraries as soon as the repositories were created.

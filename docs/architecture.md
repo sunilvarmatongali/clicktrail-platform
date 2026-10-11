@@ -91,7 +91,7 @@ A service never reads another service's database. It asks the service over its A
 - One public door: the gateway. Services trust the identity headers it sets, so it deletes client-sent ones first.
 - Tokens: HS256 JWT, 15 minutes, issuer/expiry/role checked.
 - Containers run as non-root with a read-only filesystem and no extra Linux capabilities.
-- Secrets live in environment files and Kubernetes Secrets, never in git (a secret scanner runs in CI).
+- Secrets live in AWS Secrets Manager and are read by the server at deploy time (see ADR 0006); on Kubernetes they are Kubernetes Secrets. They are never in git (a secret scanner runs in CI) and never in GitHub.
 - On the VM only ports 22 (your address only) and 8080 are opened in the security group; the smoke test proves the others are closed.
 
 ## Reliability design
