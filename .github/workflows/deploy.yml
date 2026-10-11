@@ -1,0 +1,71 @@
+name: deploy
+
+# Manual deployment of a released version to the EC2 VM.
+# Prerequisites and secrets: see docs/runbook.md ("Deploying to AWS") and docs/release-checklist.md.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deploy, without the leading v (for example 0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Never run two deployments at the same time.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production # lets you require an approval before this job runs
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the version looks right
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must look like 1.2.3"; exit 1; }
+
+      - name: Prepare SSH
+        env:
+          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The server identity is pinned in a secret, so we never connect to an impostor.
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Copy the stack files to the VM
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes"
+          rsync -az -e "$SSH" compose/docker-compose.yml "${EC2_USER}@${EC2_HOST}:/opt/clicktrail/compose/"
+          rsync -az -e "$SSH" observability/ "${EC2_USER}@${EC2_HOST}:/opt/clicktrail/observability/"
+          rsync -az -e "$SSH" scripts/ "${EC2_USER}@${EC2_HOST}:/opt/clicktrail/scripts/"
+
+      - name: Deploy and run the smoke test on the VM
+        env:
+          VERSION: ${{ inputs.version }}
+          GHCR_USER: ${{ secrets.GHCR_PULL_USER }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          # The registry token travels over the encrypted SSH connection (standard input), never on a command line.
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "${EC2_USER}@${EC2_HOST}" \
+            "docker login ghcr.io -u '${GHCR_USER}' --password-stdin && bash /opt/clicktrail/scripts/aws/deploy.sh '${VERSION}'"
+
+      - name: Smoke test from outside (public port only, internal ports must be closed)
+        env:
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          sudo apt-get install -y jq > /dev/null
+          PUBLIC_HOST="${EC2_HOST}" scripts/smoke-test.sh "http://${EC2_HOST}:8080" "$ADMIN_EMAIL" "$ADMIN_PASSWORD"

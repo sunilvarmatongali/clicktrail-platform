@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell scripts are correct (shellcheck)
+        run: shellcheck scripts/*.sh scripts/aws/*.sh scripts/k8s/*.sh
+
+      - name: Docker Compose file is valid
+        run: |
+          cp compose/.env.example compose/.env
+          docker compose -f compose/docker-compose.yml --env-file compose/.env config --quiet
+
+      - name: Dashboards and Prometheus config are valid
+        run: |
+          jq empty observability/grafana/dashboards/*.json
+          docker run --rm --entrypoint promtool -v "$PWD/observability/prometheus:/cfg:ro" \
+            prom/prometheus:v2.55.1 check config /cfg/prometheus.yml
+
+      - name: Kubernetes manifests are valid (kustomize + kubeconform)
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          kubectl kustomize k8s --load-restrictor LoadRestrictionsNone > rendered.yaml
+          ./kubeconform -strict -summary rendered.yaml
+
+      - name: No secrets committed
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
