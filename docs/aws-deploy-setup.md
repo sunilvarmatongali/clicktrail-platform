@@ -30,7 +30,7 @@ instance is **stopped** (an automatic address is released for free then). **Rele
 
 ## 2. The S3 bucket for deploy bundles
 
-S3 -> **Create bucket**: name `<BUCKET>`, region `<REGION>`, keep **Block all public access ON** and default encryption ON.
+S3 -> **Create bucket**: name `<BUCKET>` (AWS may append a suffix such as `-an` for account-scoped buckets: use the **final name shown in the bucket list**, everywhere), region `<REGION>`, keep **Block all public access ON** and default encryption ON.
 After creating it: **Management** -> **Create lifecycle rule** -> name `expire-old-bundles`, limit to prefix `deploy/`,
 action **Expire current versions of objects** after **7** days.
 
@@ -154,6 +154,7 @@ The log shows the output of the deployment on the VM and the outside smoke test.
 | "Could not assume role" / "Not authorized to perform sts:AssumeRoleWithWebIdentity" | Trust policy `sub` does not match. The most common reason is the **format** (name-only versus the ID form, see step 4), then a wrong user name or repository, or a workflow not started from `main` |
 | `AccessDenied` on S3 or `ssm:SendCommand` | The inline policy names a different bucket, instance, region or account |
 | `InvalidInstanceId` / the command never starts | The instance is not "Online" in Fleet Manager: check the instance role (step 3) and the SSM agent |
+| `NoSuchBucket` in the upload step | The `DEPLOY_BUCKET` variable differs from the real bucket name (check for a suffix such as `-an`) |
 | Command status `Failed`, output says "unauthorized" | The registry token on the VM expired: `docker login ghcr.io` on the VM |
 | The outside smoke test cannot connect | The instance is stopped, or the security group no longer allows port 8080 |
 | Smoke test fails at the rate limit | Another run happened within the same minute: wait one minute and run again |
