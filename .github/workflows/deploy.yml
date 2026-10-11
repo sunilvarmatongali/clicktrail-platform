@@ -42,7 +42,7 @@ jobs:
       INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
       DEPLOY_BUCKET: ${{ vars.DEPLOY_BUCKET }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the inputs
         env:
