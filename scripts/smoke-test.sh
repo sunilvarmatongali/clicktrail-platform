@@ -14,14 +14,15 @@
 
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-  echo "usage: $0 <gateway-url> <admin-email> <admin-password>" >&2
+if [[ $# -ne 1 && $# -ne 3 ]]; then
+  echo "usage: $0 <gateway-url> [<admin-email> <admin-password>]" >&2
   exit 2
 fi
 
 BASE_URL="${1%/}"
-ADMIN_EMAIL="$2"
-ADMIN_PASSWORD="$3"
+# Without an admin login the checks that need one are skipped (used when no admin password may be stored).
+ADMIN_EMAIL="${2:-}"
+ADMIN_PASSWORD="${3:-}"
 
 PASSED=0
 FAILED=0
@@ -143,12 +144,16 @@ check "a normal user is refused the admin total -> 403" "403" \
   "$(http_status -H "Authorization: Bearer ${USER_TOKEN}" "${BASE_URL}/api/v1/admin/stats/total")"
 check "an anonymous caller is refused the admin total -> 401" "401" "$(http_status "${BASE_URL}/api/v1/admin/stats/total")"
 
-result="$(json_post "${BASE_URL}/api/v1/auth/login" "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}")"
-check "the admin can log in -> 200" "200" "${result%% *}"
-ADMIN_TOKEN="$(jq -r '.accessToken // empty' <<< "${result#* }")"
-body="$(curl -s --max-time 10 -H "Authorization: Bearer ${ADMIN_TOKEN}" "${BASE_URL}/api/v1/admin/stats/total")"
-total="$(jq -r '.totalClickCount // 0' <<< "$body")"
-check "the admin sees a total of at least 3 clicks" "true" "$([[ "$total" -ge 3 ]] && echo true || echo false)"
+if [[ -n "$ADMIN_EMAIL" ]]; then
+  result="$(json_post "${BASE_URL}/api/v1/auth/login" "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}")"
+  check "the admin can log in -> 200" "200" "${result%% *}"
+  ADMIN_TOKEN="$(jq -r '.accessToken // empty' <<< "${result#* }")"
+  body="$(curl -s --max-time 10 -H "Authorization: Bearer ${ADMIN_TOKEN}" "${BASE_URL}/api/v1/admin/stats/total")"
+  total="$(jq -r '.totalClickCount // 0' <<< "$body")"
+  check "the admin sees a total of at least 3 clicks" "true" "$([[ "$total" -ge 3 ]] && echo true || echo false)"
+else
+  echo "   (no admin login given: the admin-only checks are skipped)"
+fi
 
 # ---------------------------------------------------------------- security checks
 echo "5. Security checks"

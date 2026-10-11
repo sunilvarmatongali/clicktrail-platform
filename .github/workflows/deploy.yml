@@ -2,12 +2,15 @@ name: deploy
 
 # Manual deployment of a released version to the EC2 VM.
 #
-# How the job gets in without leaving SSH open to the world:
-#   1. GitHub gives the job a short-lived identity token (OIDC). AWS trusts it and hands out temporary credentials
-#      for ONE role that may only add and remove rules on ONE security group. No AWS keys are stored in GitHub.
-#   2. The job opens SSH (port 22) for its own address only, deploys, and ALWAYS closes the rule again, even on failure.
+# No SSH, no stored keys, no secrets, no IP addresses to maintain:
+#   1. GitHub gives the job a short-lived identity token (OIDC). AWS trusts it and hands out temporary credentials for ONE
+#      role. The role may only: upload to one S3 folder, run a command on ONE instance through AWS Systems Manager (SSM),
+#      read the result, and look up that instance's public address.
+#   2. The job packs the stack files, uploads them to S3 and sends a "deploy" command to the instance by its ID.
+#      The instance downloads the files through a 10-minute download link, verifies their checksum and deploys.
+#   3. The job checks the public address from outside.
 #
-# One-time setup: docs/aws-oidc-setup.md. Day-to-day use: docs/runbook.md.
+# One-time setup: docs/aws-deploy-setup.md. Day-to-day use: docs/runbook.md.
 on:
   workflow_dispatch:
     inputs:
@@ -33,12 +36,11 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
-      # Not secret: addresses and identifiers. Set as repository variables (Settings -> Secrets and variables -> Actions -> Variables).
-      EC2_HOST: ${{ vars.EC2_HOST }}
-      EC2_USER: ${{ vars.EC2_USER }}
-      SECURITY_GROUP_ID: ${{ vars.EC2_SECURITY_GROUP_ID }}
+      # Not secret: identifiers only. Set as repository variables (Settings -> Secrets and variables -> Actions -> Variables).
+      INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      DEPLOY_BUCKET: ${{ vars.DEPLOY_BUCKET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -53,8 +55,8 @@ jobs:
             [[ "$OVERRIDES" =~ ^((gateway|auth-service|url-service|analytics-service)=[0-9]+\.[0-9]+\.[0-9]+)( ((gateway|auth-service|url-service|analytics-service)=[0-9]+\.[0-9]+\.[0-9]+))*$ ]] \
               || { echo "overrides must look like: gateway=0.1.1 url-service=0.1.2"; exit 1; }
           fi
-          for name in EC2_HOST EC2_USER SECURITY_GROUP_ID; do
-            [[ -n "${!name}" ]] || { echo "repository variable for ${name} is not set (see docs/aws-oidc-setup.md)"; exit 1; }
+          for name in INSTANCE_ID DEPLOY_BUCKET; do
+            [[ -n "${!name}" ]] || { echo "repository variable for ${name} is not set (see docs/aws-deploy-setup.md)"; exit 1; }
           done
 
       - name: Get temporary AWS credentials (OIDC, nothing stored)
@@ -64,57 +66,73 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           role-session-name: clicktrail-deploy-${{ github.run_id }}
 
-      - name: Open SSH for this runner only
-        id: firewall
+      - name: Pack the stack files and upload them
+        id: bundle
         run: |
-          RUNNER_IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
-          [[ "$RUNNER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "could not determine the runner address"; exit 1; }
-          aws ec2 authorize-security-group-ingress --group-id "$SECURITY_GROUP_ID" \
-            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32,Description=github-actions-run-${GITHUB_RUN_ID}}]"
-          # Written only after the rule exists, so the cleanup step knows there is something to remove.
-          echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
+          tar -czf "$RUNNER_TEMP/bundle.tgz" compose/docker-compose.yml compose/.env.example observability scripts
+          SHA="$(sha256sum "$RUNNER_TEMP/bundle.tgz" | cut -d' ' -f1)"
+          KEY="deploy/run-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz"
+          aws s3 cp "$RUNNER_TEMP/bundle.tgz" "s3://${DEPLOY_BUCKET}/${KEY}" --only-show-errors
+          # A download link that works for 10 minutes only, so the VM needs no S3 permissions of its own.
+          URL="$(aws s3 presign "s3://${DEPLOY_BUCKET}/${KEY}" --expires-in 600)"
+          echo "::add-mask::${URL}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare SSH
-        env:
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          KNOWN_HOSTS: ${{ vars.EC2_KNOWN_HOSTS }}
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          # The server's identity is pinned, so we never log in to an impostor.
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-
-      - name: Copy the stack files to the VM
-        run: |
-          SSH="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes"
-          rsync -az -e "$SSH" compose/docker-compose.yml "${EC2_USER}@${EC2_HOST}:/opt/clicktrail/compose/"
-          rsync -az -e "$SSH" observability/ "${EC2_USER}@${EC2_HOST}:/opt/clicktrail/observability/"
-          rsync -az -e "$SSH" scripts/ "${EC2_USER}@${EC2_HOST}:/opt/clicktrail/scripts/"
-
-      - name: Deploy and run the smoke test on the VM
+      - name: Deploy on the VM and run its smoke test (through SSM, no SSH)
         env:
           VERSION: ${{ inputs.version }}
           OVERRIDES: ${{ inputs.overrides }}
+          BUNDLE_URL: ${{ steps.bundle.outputs.url }}
+          BUNDLE_SHA: ${{ steps.bundle.outputs.sha }}
         run: |
-          # VERSION and OVERRIDES were validated in the first step, and deploy.sh checks them again.
-          # The VM is already logged in to the image registry (done once, see the runbook).
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "${EC2_USER}@${EC2_HOST}" \
-            "chmod +x /opt/clicktrail/scripts/*.sh /opt/clicktrail/scripts/aws/*.sh && bash /opt/clicktrail/scripts/aws/deploy.sh '${VERSION}' ${OVERRIDES}"
+          # jq builds the command list; "@sh" quotes the values safely. VERSION and OVERRIDES were validated above and
+          # deploy.sh validates them again.
+          jq -n --arg url "$BUNDLE_URL" --arg sha "$BUNDLE_SHA" --arg version "$VERSION" --arg overrides "$OVERRIDES" '{
+            commands: [
+              "set -euo pipefail",
+              "curl -fsS -o /tmp/clicktrail-bundle.tgz \($url | @sh)",
+              "echo \(($sha + "  /tmp/clicktrail-bundle.tgz") | @sh) | sha256sum -c -",
+              "mkdir -p /opt/clicktrail",
+              "tar -xzf /tmp/clicktrail-bundle.tgz -C /opt/clicktrail --no-same-owner",
+              "rm -f /tmp/clicktrail-bundle.tgz",
+              "chown -R ubuntu:ubuntu /opt/clicktrail",
+              "chmod +x /opt/clicktrail/scripts/*.sh /opt/clicktrail/scripts/aws/*.sh",
+              "sudo -u ubuntu -H bash /opt/clicktrail/scripts/aws/deploy.sh \($version) \($overrides)"
+            ],
+            executionTimeout: ["1800"]
+          }' > "$RUNNER_TEMP/ssm-parameters.json"
 
-      - name: Smoke test from outside (only the public port may answer, internal ports must be closed)
-        env:
-          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-        run: |
-          sudo apt-get install -y jq > /dev/null
-          PUBLIC_HOST="${EC2_HOST}" scripts/smoke-test.sh "http://${EC2_HOST}:8080" "$ADMIN_EMAIL" "$ADMIN_PASSWORD"
+          COMMAND_ID="$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --instance-ids "$INSTANCE_ID" \
+            --comment "clicktrail deploy ${VERSION} (run ${GITHUB_RUN_ID})" \
+            --parameters "file://${RUNNER_TEMP}/ssm-parameters.json" \
+            --query 'Command.CommandId' --output text)"
+          echo "SSM command: ${COMMAND_ID}"
 
-      # always(): runs even when an earlier step failed, so the firewall rule never stays open.
-      - name: Close SSH again
-        if: always() && steps.firewall.outputs.runner_ip != ''
-        env:
-          RUNNER_IP: ${{ steps.firewall.outputs.runner_ip }}
+          STATUS="Pending"
+          for _ in $(seq 1 200); do
+            sleep 10
+            STATUS="$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2> /dev/null || echo Pending)"
+            case "$STATUS" in
+              Success | Failed | Cancelled | TimedOut | Cancelling | Undeliverable | Terminated) break ;;
+            esac
+          done
+
+          echo "==== output from the VM ===="
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
+          echo "==== errors from the VM ===="
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text
+          echo "Final status: ${STATUS}"
+          [[ "$STATUS" == "Success" ]]
+
+      - name: Smoke test from outside (public port only; internal ports must be closed)
         run: |
-          aws ec2 revoke-security-group-ingress --group-id "$SECURITY_GROUP_ID" \
-            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32}]"
+          PUBLIC_IP="$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
+          [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "the instance has no public address"; exit 1; }
+          echo "Public address: ${PUBLIC_IP}"
+          # No admin login is stored in GitHub, so the admin-only checks run inside the VM (see above), not here.
+          PUBLIC_HOST="$PUBLIC_IP" scripts/smoke-test.sh "http://${PUBLIC_IP}:8080"

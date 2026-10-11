@@ -4,6 +4,12 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com) and the project uses
 [Semantic Versioning](https://semver.org).
 
+## [0.1.2] - 2026-10-11
+
+### Changed
+- The deploy workflow no longer uses SSH: it authenticates with OIDC and deploys through AWS Systems Manager and S3. No secrets or IP settings are stored in GitHub (see ADR 0005 and `docs/aws-deploy-setup.md`).
+- `smoke-test.sh` can run without an admin login (the admin-only checks are skipped).
+
 ## [0.1.1] - 2026-10-11
 
 ### Changed

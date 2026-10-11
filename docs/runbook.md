@@ -53,7 +53,7 @@ and runs the smoke test against `http://localhost:8080`.
 ### Every deployment
 
 Run the **deploy** workflow (Actions tab -> deploy -> Run workflow) and enter the version, for example `0.1.0`.
-It gets temporary AWS permissions, opens SSH for the runner's address only, copies the stack files, runs `scripts/aws/deploy.sh` on the VM (pull, start, wait for health, smoke test), runs the smoke test **from the runner against the public address** (which also proves that the internal ports are closed) and finally closes the SSH rule again, even if something failed.
+It gets temporary AWS permissions, uploads the stack files to S3, tells the instance (by its ID, through AWS Systems Manager) to download them and run `scripts/aws/deploy.sh` (pull, start, wait for health, smoke test), and finally runs the smoke test **from the runner against the public address**, which also proves that the internal ports are closed.
 
 Manual alternative on the VM: `bash /opt/clicktrail/scripts/aws/deploy.sh 0.1.0`
 
