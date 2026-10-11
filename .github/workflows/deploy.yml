@@ -86,10 +86,12 @@ jobs:
           BUNDLE_URL: ${{ steps.bundle.outputs.url }}
           BUNDLE_SHA: ${{ steps.bundle.outputs.sha }}
         run: |
+          # SSM runs the commands with plain sh (dash). The first command re-runs the script under bash, which set -o pipefail needs.
           # jq builds the command list; "@sh" quotes the values safely. VERSION and OVERRIDES were validated above and
           # deploy.sh validates them again.
           jq -n --arg url "$BUNDLE_URL" --arg sha "$BUNDLE_SHA" --arg version "$VERSION" --arg overrides "$OVERRIDES" '{
             commands: [
+              "[ -n \"$BASH_VERSION\" ] || exec /bin/bash \"$0\" \"$@\"",
               "set -euo pipefail",
               "curl -fsS -o /tmp/clicktrail-bundle.tgz \($url | @sh)",
               "echo \(($sha + "  /tmp/clicktrail-bundle.tgz") | @sh) | sha256sum -c -",
