@@ -9,7 +9,7 @@
 | 2. Create repositories and push | Done: all six repositories, tag `v0.1.0` on each |
 | 3. Repository settings | Partly done: Dependabot alerts and security updates are on everywhere; branch protection is on for `clicktrail-proto` only, because GitHub's free plan does not offer it for private repositories (it asks for GitHub Pro, or make the repository public) |
 | 4. First green pipelines | Done: `ci` is green on `main` in all six repositories, including the integration tests against real MySQL, PostgreSQL and MongoDB; the `release` workflows published the `0.1.0` images |
-| 5. Run it for real | Done on one EC2 VM (2026-10-11): all 12 containers healthy, `scripts/smoke-test.sh` 27 passed / 0 failed, internal ports checked closed from the internet. A gateway patch (`0.1.1`) was then deployed alone with `deploy.sh 0.1.0 gateway=0.1.1`. Not yet run: the GitHub deploy workflow (needs the repository secrets) and the Kubernetes path on `kind` |
+| 5. Run it for real | Done on one EC2 VM (2026-10-11): all 12 containers healthy, `scripts/smoke-test.sh` 27 passed / 0 failed, internal ports checked closed from the internet. A gateway patch (`0.1.1`) was then deployed alone with `deploy.sh 0.1.0 gateway=0.1.1`. The GitHub **deploy** workflow has also run successfully (OIDC + SSM + S3, no SSH, no secrets): 27 checks passed on the VM and 36 from the public internet. Not yet run: the Kubernetes path on `kind` |
 | 6. Record the results | Done: real EXPLAIN numbers are in `clicktrail-url-service/docs/query-optimization.md` (19.6 ms -> 0.07 ms) |
 | 7. Afterwards | Not yet |
 
