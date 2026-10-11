@@ -18,7 +18,8 @@ Review them one by one: read what changed, wait for `ci` to pass, then merge or 
 (for example `actions/checkout`) can need small workflow changes, so a failing pipeline on such a pull request is normal.
 
 ---
-Nothing has been pushed yet. Work through this list top to bottom. Every step is small and reversible until you push.
+
+The steps below are the full procedure (steps 0 to 4 are already done, see the status table above).
 
 ## 0. Decide first: should `clicktrail-proto` be public?
 
