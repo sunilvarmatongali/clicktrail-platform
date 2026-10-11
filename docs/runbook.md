@@ -47,22 +47,13 @@ and runs the smoke test against `http://localhost:8080`.
    ```
 5. Log out and in once (Docker group), then log in to the registry on the VM:
    `echo <token> | docker login ghcr.io -u <github-user> --password-stdin`
-6. **GitHub Actions secrets** in `clicktrail-platform` (Settings -> Secrets and variables -> Actions, environment `production`):
-
-   | Secret | Value |
-   |---|---|
-   | `EC2_HOST` | the VM's public address |
-   | `EC2_USER` | `ubuntu` |
-   | `EC2_SSH_KEY` | private key of a key pair that can log in to the VM |
-   | `EC2_KNOWN_HOSTS` | output of `ssh-keyscan -t ed25519 <vm-address>` (pins the server identity) |
-   | `GHCR_PULL_USER`, `GHCR_PULL_TOKEN` | GitHub user and a token with `read:packages` |
-   | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | the admin login written into `/opt/clicktrail/compose/.env` by the bootstrap |
-
+6. **GitHub deployment access** (one time): follow [aws-oidc-setup.md](aws-oidc-setup.md). It creates a short-lived,
+   key-less AWS permission (OIDC) that lets the workflow open SSH for its own address only for the length of a deploy,
+   plus a few repository variables and three secrets (`EC2_SSH_KEY`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`).
 ### Every deployment
 
 Run the **deploy** workflow (Actions tab -> deploy -> Run workflow) and enter the version, for example `0.1.0`.
-It copies the stack files, runs `scripts/aws/deploy.sh` on the VM (pull, start, wait for health, smoke test), then runs the
-smoke test **from the runner against the public address**, which also proves that the internal ports are closed.
+It gets temporary AWS permissions, opens SSH for the runner's address only, copies the stack files, runs `scripts/aws/deploy.sh` on the VM (pull, start, wait for health, smoke test), runs the smoke test **from the runner against the public address** (which also proves that the internal ports are closed) and finally closes the SSH rule again, even if something failed.
 
 Manual alternative on the VM: `bash /opt/clicktrail/scripts/aws/deploy.sh 0.1.0`
 

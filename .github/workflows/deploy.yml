@@ -1,7 +1,13 @@
 name: deploy
 
 # Manual deployment of a released version to the EC2 VM.
-# Prerequisites and secrets: see docs/runbook.md ("Deploying to AWS") and docs/release-checklist.md.
+#
+# How the job gets in without leaving SSH open to the world:
+#   1. GitHub gives the job a short-lived identity token (OIDC). AWS trusts it and hands out temporary credentials
+#      for ONE role that may only add and remove rules on ONE security group. No AWS keys are stored in GitHub.
+#   2. The job opens SSH (port 22) for its own address only, deploys, and ALWAYS closes the rule again, even on failure.
+#
+# One-time setup: docs/aws-oidc-setup.md. Day-to-day use: docs/runbook.md.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write # lets the job request the OIDC identity token (needed for the AWS role)
 
 # Never run two deployments at the same time.
 concurrency:
@@ -26,14 +33,16 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production # lets you require an approval before this job runs
+    timeout-minutes: 30
     env:
-      EC2_HOST: ${{ secrets.EC2_HOST }}
-      EC2_USER: ${{ secrets.EC2_USER }}
+      # Not secret: addresses and identifiers. Set as repository variables (Settings -> Secrets and variables -> Actions -> Variables).
+      EC2_HOST: ${{ vars.EC2_HOST }}
+      EC2_USER: ${{ vars.EC2_USER }}
+      SECURITY_GROUP_ID: ${{ vars.EC2_SECURITY_GROUP_ID }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the version looks right
+      - name: Check the inputs
         env:
           VERSION: ${{ inputs.version }}
           OVERRIDES: ${{ inputs.overrides }}
@@ -44,16 +53,36 @@ jobs:
             [[ "$OVERRIDES" =~ ^((gateway|auth-service|url-service|analytics-service)=[0-9]+\.[0-9]+\.[0-9]+)( ((gateway|auth-service|url-service|analytics-service)=[0-9]+\.[0-9]+\.[0-9]+))*$ ]] \
               || { echo "overrides must look like: gateway=0.1.1 url-service=0.1.2"; exit 1; }
           fi
+          for name in EC2_HOST EC2_USER SECURITY_GROUP_ID; do
+            [[ -n "${!name}" ]] || { echo "repository variable for ${name} is not set (see docs/aws-oidc-setup.md)"; exit 1; }
+          done
+
+      - name: Get temporary AWS credentials (OIDC, nothing stored)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: clicktrail-deploy-${{ github.run_id }}
+
+      - name: Open SSH for this runner only
+        id: firewall
+        run: |
+          RUNNER_IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          [[ "$RUNNER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "could not determine the runner address"; exit 1; }
+          aws ec2 authorize-security-group-ingress --group-id "$SECURITY_GROUP_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32,Description=github-actions-run-${GITHUB_RUN_ID}}]"
+          # Written only after the rule exists, so the cleanup step knows there is something to remove.
+          echo "runner_ip=${RUNNER_IP}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare SSH
         env:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+          KNOWN_HOSTS: ${{ vars.EC2_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # The server identity is pinned in a secret, so we never connect to an impostor.
+          # The server's identity is pinned, so we never log in to an impostor.
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
 
       - name: Copy the stack files to the VM
@@ -67,18 +96,25 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           OVERRIDES: ${{ inputs.overrides }}
-          GHCR_USER: ${{ secrets.GHCR_PULL_USER }}
-          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
-          # The registry token travels over the encrypted SSH connection (standard input), never on a command line.
           # VERSION and OVERRIDES were validated in the first step, and deploy.sh checks them again.
-          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "${EC2_USER}@${EC2_HOST}" \
-            "docker login ghcr.io -u '${GHCR_USER}' --password-stdin && bash /opt/clicktrail/scripts/aws/deploy.sh '${VERSION}' ${OVERRIDES}"
+          # The VM is already logged in to the image registry (done once, see the runbook).
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "${EC2_USER}@${EC2_HOST}" \
+            "chmod +x /opt/clicktrail/scripts/*.sh /opt/clicktrail/scripts/aws/*.sh && bash /opt/clicktrail/scripts/aws/deploy.sh '${VERSION}' ${OVERRIDES}"
 
-      - name: Smoke test from outside (public port only, internal ports must be closed)
+      - name: Smoke test from outside (only the public port may answer, internal ports must be closed)
         env:
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           sudo apt-get install -y jq > /dev/null
           PUBLIC_HOST="${EC2_HOST}" scripts/smoke-test.sh "http://${EC2_HOST}:8080" "$ADMIN_EMAIL" "$ADMIN_PASSWORD"
+
+      # always(): runs even when an earlier step failed, so the firewall rule never stays open.
+      - name: Close SSH again
+        if: always() && steps.firewall.outputs.runner_ip != ''
+        env:
+          RUNNER_IP: ${{ steps.firewall.outputs.runner_ip }}
+        run: |
+          aws ec2 revoke-security-group-ingress --group-id "$SECURITY_GROUP_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32}]"
