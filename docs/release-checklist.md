@@ -1,5 +1,23 @@
 # Release checklist: from local folders to GitHub to a running stack
 
+## Status (2026-10-11)
+
+| Step | State |
+|---|---|
+| 0. Decide proto visibility | Done: `clicktrail-proto` is **public**, the other five are **private** |
+| 1. Remove local `replace` lines | Done (gateway and analytics use the published `clicktrail-proto v0.1.0`) |
+| 2. Create repositories and push | Done: all six repositories, tag `v0.1.0` on each |
+| 3. Repository settings | Partly done: Dependabot alerts and security updates are on everywhere; branch protection is on for `clicktrail-proto` only, because GitHub's free plan does not offer it for private repositories (it asks for GitHub Pro, or make the repository public) |
+| 4. First green pipelines | Done: `ci` is green on `main` in all six repositories, including the integration tests against real MySQL, PostgreSQL and MongoDB; the `release` workflows published the `0.1.0` images |
+| 5. Run it for real | **Next**: AWS (see runbook.md, section 3) |
+| 6. Record the results | Not yet: needs a real database run |
+| 7. Afterwards | Not yet |
+
+Dependabot opened pull requests for newer versions of GitHub Actions and libraries as soon as the repositories were created.
+Review them one by one: read what changed, wait for `ci` to pass, then merge or close. Major-version bumps of actions
+(for example `actions/checkout`) can need small workflow changes, so a failing pipeline on such a pull request is normal.
+
+---
 Nothing has been pushed yet. Work through this list top to bottom. Every step is small and reversible until you push.
 
 ## 0. Decide first: should `clicktrail-proto` be public?
