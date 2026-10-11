@@ -26,6 +26,7 @@ This repository is the home of the platform: how the pieces run together, how th
 | run it (Docker, Kubernetes, AWS) | [docs/runbook.md](docs/runbook.md) |
 | publish the code and go live | [docs/release-checklist.md](docs/release-checklist.md) |
 | understand why a decision was made | [docs/adr/](docs/adr/) |
+| explain the project in an interview | [docs/interview-guide.md](docs/interview-guide.md) |
 
 ## Quick start (needs Docker)
 
