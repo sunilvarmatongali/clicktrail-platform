@@ -16,7 +16,7 @@ Consequences worth knowing:
 
 Replace the placeholders: `<ACCOUNT_ID>` (12-digit AWS account number), `<REGION>` (for example `ap-south-1`),
 `<INSTANCE_ID>` (EC2 -> Instances, looks like `i-0123456789abcdef0`), `<BUCKET>` (a globally unique name, for example
-`clicktrail-deploy-<ACCOUNT_ID>-<REGION>`), `<GITHUB_USER>` (your GitHub user name).
+`clicktrail-deploy-<ACCOUNT_ID>-<REGION>`), `<GITHUB_USER>` (your GitHub user name), `<USER_ID>` and `<REPO_ID>` (the numeric IDs of your GitHub account and of the repository, see step 4).
 
 ## 1. A static public address (Elastic IP)
 
@@ -64,7 +64,7 @@ IAM -> **Roles** -> **Create role** -> **Custom trust policy**. Paste:
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:<GITHUB_USER>/clicktrail-platform:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:<GITHUB_USER>@<USER_ID>/clicktrail-platform@<REPO_ID>:ref:refs/heads/main"
         }
       }
     }
@@ -73,6 +73,18 @@ IAM -> **Roles** -> **Create role** -> **Custom trust policy**. Paste:
 ```
 
 The `sub` line is the lock: only a workflow of **this repository, on the `main` branch** can use the role.
+**Which `sub` format does your account use?** GitHub signs tokens with either the classic name-only form
+(`repo:<user>/<repo>:ref:refs/heads/main`) or the newer one that also contains the numeric IDs
+(`repo:<user>@<USER_ID>/<repo>@<REPO_ID>:ref:refs/heads/main`). The ID form is safer because the IDs never change, and
+a new repository that reuses an old name gets different IDs. Find your IDs with:
+
+```bash
+gh api users/<GITHUB_USER> --jq .id                        # USER_ID
+gh api repos/<GITHUB_USER>/clicktrail-platform --jq .id    # REPO_ID
+```
+
+To see exactly what GitHub sends (the claims are public metadata, not secrets), run a workflow with `id-token: write` that decodes
+the middle part of the token requested from `ACTIONS_ID_TOKEN_REQUEST_URL`, and copy its `sub` value.
 Skip the managed policies, name the role `clicktrail-github-deploy`, create it, then open it -> **Add permissions** ->
 **Create inline policy** -> JSON, named `clicktrail-deploy`:
 
@@ -139,7 +151,7 @@ The log shows the output of the deployment on the VM and the outside smoke test.
 
 | Symptom | Cause |
 |---|---|
-| "Could not assume role" / "Not authorized to perform sts:AssumeRoleWithWebIdentity" | Trust policy `sub` does not match (user name, repository), or the workflow was not started from `main` |
+| "Could not assume role" / "Not authorized to perform sts:AssumeRoleWithWebIdentity" | Trust policy `sub` does not match. The most common reason is the **format** (name-only versus the ID form, see step 4), then a wrong user name or repository, or a workflow not started from `main` |
 | `AccessDenied` on S3 or `ssm:SendCommand` | The inline policy names a different bucket, instance, region or account |
 | `InvalidInstanceId` / the command never starts | The instance is not "Online" in Fleet Manager: check the instance role (step 3) and the SSM agent |
 | Command status `Failed`, output says "unauthorized" | The registry token on the VM expired: `docker login ghcr.io` on the VM |
