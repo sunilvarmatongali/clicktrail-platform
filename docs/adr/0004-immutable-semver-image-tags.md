@@ -16,4 +16,7 @@ choosing the previous versions.
 ## Consequences
 
 - Positive: reproducible deployments, an audit trail (the version is in git), simple rollback.
-- Negative: a release needs a tag per service. In this first version all services share `0.1.0`, so one number selects the whole system.
+- Negative: a release needs a tag per service.
+- A shared `CLICKTRAIL_VERSION` selects the whole system, and each service can be overridden on its own
+  (`GATEWAY_VERSION`, `AUTH_SERVICE_VERSION`, ...). This was added after the first patch release (gateway `0.1.1`)
+  showed that one number for all services is not enough. `deploy.sh 0.1.0 gateway=0.1.1` sets it.

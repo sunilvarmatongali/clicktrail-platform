@@ -4,6 +4,16 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com) and the project uses
 [Semantic Versioning](https://semver.org).
 
+## [0.1.1] - 2026-10-11
+
+### Changed
+- Each service version can be set on its own (`GATEWAY_VERSION` and so on), and `deploy.sh` accepts `service=version` overrides.
+- The deploy workflow has an optional, strictly validated `overrides` input.
+
+### Fixed
+- The smoke test waits for Prometheus to scrape every target instead of checking once.
+- The bootstrap script makes the copied scripts executable.
+
 ## [0.1.0] - 2026-10-11
 
 ### Added

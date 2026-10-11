@@ -172,8 +172,14 @@ fi
 # ---------------------------------------------------------------- story 5: observability
 if [[ -n "${PROMETHEUS_URL:-}" ]]; then
   echo "6. Observability"
-  targets="$(curl -s --max-time 10 "${PROMETHEUS_URL%/}/api/v1/targets")"
-  down="$(jq -r '[.data.activeTargets[] | select(.health != "up") | .labels.job] | join(",")' <<< "$targets")"
+  # Prometheus scrapes every 15 seconds, so a service that started a moment ago may need one more round.
+  down="unknown"
+  for _ in $(seq 1 12); do
+    targets="$(curl -s --max-time 10 "${PROMETHEUS_URL%/}/api/v1/targets" || true)"
+    down="$(jq -r '[.data.activeTargets[] | select(.health != "up") | .labels.job] | join(",")' <<< "$targets" 2> /dev/null || echo unknown)"
+    [[ -z "$down" ]] && break
+    sleep 5
+  done
   check "every Prometheus target is up" "" "$down"
 fi
 

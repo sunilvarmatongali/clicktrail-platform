@@ -22,7 +22,7 @@ services:
   # ---------------------------------------------------------------- application services
   gateway:
     <<: *go-service
-    image: ghcr.io/${GITHUB_OWNER:?set GITHUB_OWNER in .env}/clicktrail-gateway:${CLICKTRAIL_VERSION:?set CLICKTRAIL_VERSION in .env}
+    image: ghcr.io/${GITHUB_OWNER:?set GITHUB_OWNER in .env}/clicktrail-gateway:${GATEWAY_VERSION:-${CLICKTRAIL_VERSION:?set CLICKTRAIL_VERSION in .env}}
     ports:
       - "8080:8080" # the only public port
     environment:
@@ -42,7 +42,7 @@ services:
 
   auth-service:
     <<: *go-service
-    image: ghcr.io/${GITHUB_OWNER}/clicktrail-auth-service:${CLICKTRAIL_VERSION}
+    image: ghcr.io/${GITHUB_OWNER}/clicktrail-auth-service:${AUTH_SERVICE_VERSION:-${CLICKTRAIL_VERSION}}
     environment:
       AUTH_HTTP_PORT: "8081"
       AUTH_DATABASE_DSN: clicktrail:${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}@tcp(mysql:3306)/auth?charset=utf8mb4&parseTime=True&loc=UTC
@@ -55,7 +55,7 @@ services:
 
   url-service:
     <<: *go-service
-    image: ghcr.io/${GITHUB_OWNER}/clicktrail-url-service:${CLICKTRAIL_VERSION}
+    image: ghcr.io/${GITHUB_OWNER}/clicktrail-url-service:${URL_SERVICE_VERSION:-${CLICKTRAIL_VERSION}}
     environment:
       URL_HTTP_PORT: "8082"
       URL_DATABASE_DSN: host=postgres user=clicktrail password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env} dbname=links port=5432 sslmode=disable TimeZone=UTC
@@ -71,7 +71,7 @@ services:
 
   analytics-service:
     <<: *go-service
-    image: ghcr.io/${GITHUB_OWNER}/clicktrail-analytics-service:${CLICKTRAIL_VERSION}
+    image: ghcr.io/${GITHUB_OWNER}/clicktrail-analytics-service:${ANALYTICS_SERVICE_VERSION:-${CLICKTRAIL_VERSION}}
     environment:
       ANALYTICS_HTTP_PORT: "8083"
       ANALYTICS_GRPC_PORT: "9083"

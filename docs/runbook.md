@@ -88,8 +88,9 @@ disk and for an unattached Elastic IP. Remove what you do not need.
 | Follow the logs of a service | `docker compose logs -f gateway` |
 | Find one request across all services | `docker compose logs \| grep <traceId>` (the `traceId` is in every error response) |
 | Restart one service | `docker compose restart url-service` |
-| Upgrade one service | edit the version in `.env` (or run `deploy.sh`), then `docker compose up -d` |
-| Roll back | deploy the previous version number |
+| Upgrade one service | `bash /opt/clicktrail/scripts/aws/deploy.sh 0.1.0 gateway=0.1.1` (everything at 0.1.0, the gateway at 0.1.1) |
+| Upgrade everything | `bash /opt/clicktrail/scripts/aws/deploy.sh 0.2.0` |
+| Roll back | deploy the previous version numbers again |
 
 ## 5. Troubleshooting
 
