@@ -179,7 +179,7 @@ services:
       start_period: 40s
     mem_limit: 768m
 
-  # Creates the topic once, so it exists with the right settings before any service uses it.
+  # Creates the topics once, so they exist with the right settings before any service uses it.
   kafka-init:
     image: apache/kafka:3.9.0
     restart: "no"
@@ -188,8 +188,9 @@ services:
       kafka: { condition: service_healthy }
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
-        --topic clicktrail.link-clicked.v1 --partitions 3 --replication-factor 1
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic clicktrail.link-clicked.v1 --partitions 3 --replication-factor 1 &&
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic clicktrail.link-created.v1 --partitions 3 --replication-factor 1
     mem_limit: 256m
 
   # ---------------------------------------------------------------- observability

@@ -20,7 +20,8 @@ Actions, and it runs on AWS EC2 with Docker Compose. Kubernetes manifests are in
 2. **Architecture.** One public door, the **gateway**. Behind it: **auth-service** (users, passwords, tokens),
    **url-service** (links and redirects), **analytics-service** (click counting). Each service owns its own database.
 3. **Communication.** Synchronous for things the user waits for (login, create link, redirect, statistics). Asynchronous for
-   the click: the redirect drops an event on Kafka and returns; analytics consumes it later.
+   the click: the redirect drops an event on Kafka and returns; analytics consumes it later. A new link is announced through a
+   **transactional outbox**, so the event is never lost even if Kafka is down at that moment.
 4. **Resilience.** Cache, queue and rate limiter failures never break a redirect. A failing service gives a clean `502` with a
    trace ID. Click events are acknowledged only after they are stored, and duplicates are ignored.
 5. **Security.** Only the gateway is public. It verifies the JWT, enforces roles, rate-limits, and deletes any identity headers a
@@ -74,7 +75,7 @@ you would likely use one PostgreSQL plus Redis. Say so if asked; it shows judgem
 - Deletes those headers if a client sent them, so identity cannot be forged.
 - RBAC: `/api/v1/admin/*` only for role `admin` (otherwise 403).
 - Redis rate limiting per client address: 120 requests/minute, and 10/minute for register and login.
-- Reverse-proxies to auth and url services; answers statistics itself by calling analytics over gRPC after an ownership check.
+- Reverse-proxies to auth and url services; answers statistics itself with one gRPC call to analytics, which also checks that the caller owns the link.
 - Creates the request ID that all services log (follow one request through all logs).
 
 **auth-service** (MySQL)
@@ -82,12 +83,13 @@ you would likely use one PostgreSQL plus Redis. Say so if asked; it shows judgem
 - Creates the first admin from environment variables on start-up.
 
 **url-service** (PostgreSQL, Redis, Kafka producer)
-- Create a link (random 7-character code, retry on the rare collision thanks to the unique index), list my links, owner-only get.
+- Create a link (random 7-character code, retry on the rare collision thanks to the unique index), list my links, owner-only get. Creating a link saves the link **and** a `LinkCreated` row in the outbox table in one transaction; a background relay sends the row to Kafka.
 - Redirect `GET /r/{code}`: Redis first, PostgreSQL on a miss, answer **302** (not 301, or browsers would cache it and clicks would never be counted), then publish a `LinkClicked` event.
 - Only `http`/`https` URLs are accepted (blocks `javascript:` and `file:`).
 
 **analytics-service** (Kafka consumer, MongoDB, gRPC)
 - Reads click events, stores each as a document whose `_id` is the event ID, and serves counts over gRPC.
+- Reads `LinkCreated` events and keeps a small copy "short code -> owner" (a **read model**), so it can answer "how many clicks does *my* link have?" on its own.
 - Exposes consumer lag as a metric.
 
 **clicktrail-proto**: the gRPC contract, versioned and shared by gateway and analytics. **clicktrail-platform**: deployment, observability, smoke test, docs.
@@ -100,12 +102,13 @@ you would likely use one PostgreSQL plus Redis. Say so if asked; it shows judgem
 
 **B. Create and open a link.**
 1. `POST /api/v1/links` with the token. Gateway verifies it, sets `X-User-Id`, forwards to url-service.
-2. url-service validates the URL, generates a code, inserts into PostgreSQL. Returns the short URL.
+2. url-service validates the URL, generates a code, and in **one transaction** inserts the link and an outbox row. Returns the short URL. A relay then publishes `LinkCreated` to Kafka and analytics stores the owner.
 3. Anyone opens `/r/{code}`: gateway (rate limit) -> url-service -> Redis hit or PostgreSQL -> **302** to the original URL.
 4. In the same request url-service publishes the click event to Kafka **asynchronously** and does not wait.
 
-**C. See statistics.** `GET /api/v1/links/{code}/stats` -> gateway verifies the token -> asks url-service "does this user own this link?" (HTTP) ->
-asks analytics-service for the count (gRPC) -> returns it. Another user's link gives `404` (same answer as "does not exist", so codes cannot be probed).
+**C. See statistics.** `GET /api/v1/links/{code}/stats` -> gateway verifies the token -> one gRPC call to analytics-service with the code and the user ID from the token ->
+analytics checks its own copy of the owners and returns the count. Another user's link gives `404` (same answer as "does not exist", so codes cannot be probed).
+A link created a second ago may give `404` for a moment (eventual consistency).
 
 ---
 
@@ -115,15 +118,16 @@ asks analytics-service for the count (gRPC) -> returns it. Another user's link g
 |---|---|---|
 | client -> gateway -> auth / url | synchronous HTTP | The user waits for the answer |
 | gateway -> analytics (counts) | synchronous gRPC | The user waits for the number; strict typed contract |
-| gateway -> url-service (ownership check) | synchronous HTTP | Must know the answer before showing statistics |
 | url-service -> analytics (click) | **asynchronous via Kafka** | The redirect must not wait for, or depend on, analytics |
+| url-service -> analytics (new link, owner) | **asynchronous via Kafka + transactional outbox** | Statistics must not depend on url-service being up; the event must not be lost |
 
 Why Kafka for the click: it **decouples** the services in time and availability. url-service does not know analytics exists. If analytics is
 down or slow, redirects are unaffected and the events wait in Kafka (retention) until it is back. The cost is **eventual consistency**: a click
 appears in the statistics after a short delay (seconds).
 
 **Delivery guarantees (be able to explain this):**
-- Producer side: asynchronous and best effort (a failed publish is logged, the redirect still succeeds).
+- Producer side, clicks: asynchronous and best effort (a failed publish is logged, the redirect still succeeds).
+- Producer side, new links: **transactional outbox**. The link and the event row are saved in one database transaction; a relay sends the row, waits for Kafka's confirmation and only then marks it sent. At-least-once, never lost.
 - Consumer side: **at-least-once**. Process, store, then commit the offset. A crash between store and commit means Kafka resends.
 - **Idempotent consumer**: the event ID is the MongoDB `_id`, so a resent event is ignored. Net effect: each click counted once.
 - Messages that can never be parsed are counted and skipped so they cannot block the topic (a dead-letter topic is the next step).
@@ -133,7 +137,7 @@ appears in the statistics after a short delay (seconds).
 | Failure | What the user sees | What happens inside |
 |---|---|---|
 | **Redis down** | Everything works | url-service falls back to PostgreSQL; the gateway's rate limiter **fails open** (logs a warning) |
-| **Kafka down** | Redirects work | Clicks during the outage are not counted (best effort); see "improvements: outbox" |
+| **Kafka down** | Redirects and **link creation** work | Clicks during the outage are not counted (best effort). New-link events wait in the outbox table and are sent when Kafka is back |
 | **analytics-service down** | Statistics return `502` | Redirects work; click events pile up in Kafka and are processed after recovery, nothing lost |
 | **MongoDB down** | Statistics fail | Consumer retries with exponential backoff (0.5 s up to 30 s) and does **not** commit, so no click is lost; lag grows and is visible in Grafana |
 | **PostgreSQL down** | Create/list fail; **cached links still redirect** | Redis answers cache hits without touching the database |
@@ -141,7 +145,7 @@ appears in the statistics after a short delay (seconds).
 | **url-service down** | Link APIs and redirects return `502` | The gateway answers with the standard error body and a trace ID; auth and statistics keep working |
 | **gateway instance down** | Outage on a single VM | On Kubernetes there are 2 replicas and a disruption budget |
 
-Mechanisms to name: **retries with jitter and a circuit breaker per downstream service** (see below), timeouts on every call (3 s for gRPC and the ownership check, 3 s connect and 10 s response for proxying), health and
+Mechanisms to name: **retries with jitter and a circuit breaker per downstream service** (see below), timeouts on every call (3 s for gRPC, 3 s connect and 10 s response for proxying), health and
 readiness probes (`/healthz` restarts, `/readyz` removes from traffic), graceful shutdown (finish running requests on SIGTERM), startup
 retries for databases, and structured logs with a request ID.
 
@@ -218,7 +222,7 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 2. **TLS and a domain.** Put an HTTPS load balancer (ACM certificate) or a reverse proxy in front of the gateway; add TLS or mTLS between services.
 3. **Managed data stores with backups.** RDS (MySQL/PostgreSQL), DocumentDB or Atlas, ElastiCache, MSK, multi-AZ.
 4. **More resilience patterns.** Circuit breakers and jittered retries exist; add bulkheads, fallbacks and a shared retry budget.
-5. **Transactional outbox** for click events (exact delivery instead of best effort), and a dead-letter topic.
+5. **Outbox for click events too** (they are best effort today), a cleanup job for sent outbox rows, change-data-capture (Debezium) instead of polling, and a dead-letter topic.
 6. **Asymmetric JWT (RS256)** so only the auth service holds the signing key; refresh tokens and revocation.
 7. **Run Kubernetes for real** (EKS or a managed cluster) with an ingress, autoscaling and GitOps.
 8. **A staging environment** and automated promotion; currently there is one environment.
@@ -237,7 +241,15 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 
 **How do you avoid counting a click twice?** At-least-once delivery plus an idempotent consumer: the event ID is the MongoDB `_id`, a duplicate insert is ignored.
 
-**What if Kafka is down when someone clicks?** The redirect still works; that click event is lost (best effort). The fix for exact delivery is a transactional outbox.
+**What if Kafka is down when someone clicks?** The redirect still works; that click event is lost (best effort), because a click is cheap to lose. For data that must not be lost (a new link and its owner) I used a transactional outbox.
+
+**What is the dual-write problem and how did you solve it?** Saving to the database and publishing to Kafka are two systems with no shared transaction. If the second step fails, the other service never learns what happened. I save the event in an outbox table in the *same* database transaction as the link, and a relay publishes it afterwards and retries until Kafka confirms. Delivery becomes at-least-once, so the consumer is idempotent (the short code is the document ID). I proved it on the server by stopping Kafka, creating a link (it worked), starting Kafka, and watching the event arrive.
+
+**Why polling and not Debezium (CDC)?** Polling a small partial index every 500 ms needs no extra infrastructure and is simple to explain and test. CDC has less delay and no polling, but needs Kafka Connect and database log settings. The relay is small, so it can be swapped later.
+
+**What is a read model and what does it cost?** A copy of another service's data, shaped for my questions. Analytics keeps "short code -> owner", so statistics do not depend on url-service. The cost is eventual consistency (a brand-new link may give `404` for a moment) and a second copy of the data that must be kept in step by events.
+
+**How do two copies of url-service not send the same event twice?** The relay locks rows with `SELECT ... FOR UPDATE SKIP LOCKED`, so a second copy skips rows the first one holds. A crash after Kafka confirmed but before the commit can still cause a duplicate, which the idempotent consumer ignores.
 
 **What is a circuit breaker and why did you use one?** It stops calling a service that keeps failing, so users get an immediate `503` instead of waiting for a timeout, and the service can recover. It has three states: closed (normal), open (calls refused for 10 s) and half-open (one trial call). I used `sony/gobreaker` behind a small wrapper in the gateway, one per downstream service, and I proved it by stopping a service on the real server.
 
@@ -273,13 +285,13 @@ This is correlation by ID, **not** full distributed tracing (OpenTelemetry would
 - 5 user stories; smoke test: **27 checks on the server, 36 from the internet**, 0 failures.
 - Index result: **19.6 ms -> 0.07 ms** (about 270x) on 300,000 rows.
 - JWT lifetime 15 min; rate limits 120/min general and 10/min for login and register.
-- Kafka topic `clicktrail.link-clicked.v1` with 3 partitions; consumer retry backoff 0.5 s to 30 s.
-- 6 decision records (ADRs) in the platform repo, 3 to 4 in each service.
+- Kafka topics `clicktrail.link-clicked.v1` and `clicktrail.link-created.v1`, 3 partitions each; consumer retry backoff 0.5 s to 30 s; outbox relay polls every 500 ms (pauses double up to 30 s while Kafka is down).
+- 7 decision records (ADRs) in the platform repo, 4 to 6 in each service.
 
 ## 15. Do NOT claim
 
 - That it ran on Kubernetes in production (it ran on EC2 with Docker Compose; the manifests are validated, not run on a cluster).
 - Multi-region, high availability, backups or managed databases (single node, demo setup).
-- Zero-downtime deploys, distributed tracing, bulkheads or fallbacks (not built). Circuit breakers and retries with jitter **are** built into the gateway.
+- Zero-downtime deploys, distributed tracing, bulkheads or fallbacks (not built). Circuit breakers and retries with jitter **are** built into the gateway. The outbox covers new-link events only, not clicks.
 - "Exactly-once" anything (it is at-least-once with idempotency).
 - Real users or traffic (it is a portfolio project; the numbers come from tests and a 300,000-row benchmark).

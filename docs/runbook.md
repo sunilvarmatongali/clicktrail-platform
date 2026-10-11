@@ -93,6 +93,8 @@ disk and for an unattached Elastic IP. Remove what you do not need.
 | Service keeps restarting | `docker compose logs <service>`: the first lines show which setting is wrong |
 | `/r/<code>` returns 502 | url-service is down; `docker compose ps` and check its logs |
 | Clicks do not appear in statistics | `docker compose logs analytics-service`; check the Kafka lag panel in Grafana |
+| Statistics of a link answer `404` right after creating it | Normal for a moment: the `LinkCreated` event is on its way. If it lasts: Grafana panel "Outbox: events waiting" (is url-service sending?) and `analytics_links_processed_total`; check the url-service and analytics logs |
+| `outbox_pending_events` keeps growing | url-service cannot reach Kafka (`docker compose ps kafka`, url-service logs "outbox round failed"). The events are safe in PostgreSQL and are sent when Kafka is back; nothing to do except fix Kafka |
 | Requests get `503` with a `Retry-After` header | The gateway's circuit breaker for a failing service is open. Find the service in the metric `circuit_breaker_state{name=...}` (2 = open), check its logs, and fix or restart it; the circuit closes by itself after a successful trial call |
 | Everything gets `429` | The client address sent too many requests; wait one minute |
 | Login works but admin gets `403` | You are logged in as a normal user; the admin account is the one in `ADMIN_EMAIL` |

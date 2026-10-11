@@ -18,7 +18,7 @@ flowchart LR
         mysql[(MySQL)]
         postgres[(PostgreSQL)]
         mongo[(MongoDB)]
-        kafka{{Kafka topic<br/>clicktrail.link-clicked.v1}}
+        kafka{{Kafka topics<br/>link-clicked.v1<br/>link-created.v1}}
         prom[Prometheus]
         graf[Grafana]
     end
@@ -32,6 +32,7 @@ flowchart LR
     url --> postgres
     url -.->|cache| redis
     url -->|click event| kafka
+    url -.->|outbox relay: LinkCreated| kafka
     kafka -->|consume| analytics
     analytics --> mongo
     prom -.->|scrape /metrics| gateway
@@ -48,8 +49,8 @@ flowchart LR
 | `clicktrail-proto` | gRPC contract between gateway and analytics |
 | `clicktrail-gateway` | Public entry point: JWT check, RBAC, rate limits, forwarding, statistics |
 | `clicktrail-auth-service` | Users, passwords, JWT issuing (MySQL) |
-| `clicktrail-url-service` | Short links, redirects, cache, click events (PostgreSQL, Redis, Kafka) |
-| `clicktrail-analytics-service` | Click storage and counts (Kafka, MongoDB, gRPC) |
+| `clicktrail-url-service` | Short links, redirects, cache, click events, and the outbox that announces new links (PostgreSQL, Redis, Kafka) |
+| `clicktrail-analytics-service` | Click storage and counts, plus a copy of who owns which link (Kafka, MongoDB, gRPC) |
 | `clicktrail-platform` | This repository: Compose, Kubernetes, observability, AWS scripts, docs |
 
 Each service has its own repository, tests, pipeline and version number, so a team could change and release it independently.
@@ -63,6 +64,8 @@ A service never reads another service's database. It asks the service over its A
 | Users and password hashes | auth-service | MySQL |
 | Links | url-service | PostgreSQL (+ Redis cache) |
 | Click events | analytics-service | MongoDB |
+| Copy of link owners (read model, filled from `LinkCreated` events) | analytics-service | MongoDB |
+| Outbox of events waiting for Kafka | url-service | PostgreSQL |
 | Rate-limit counters | gateway | Redis |
 
 ## Ports
@@ -83,8 +86,18 @@ A service never reads another service's database. It asks the service over its A
 2. url-service looks in Redis, then PostgreSQL if needed, and answers `302`.
 3. It also puts a `LinkClicked` event on Kafka (asynchronously, so the visitor does not wait).
 4. analytics-service reads the event, stores it in MongoDB (duplicates are ignored) and only then confirms it to Kafka.
-5. Later the owner asks the gateway for the statistics; the gateway verifies ownership with url-service and
-   fetches the count from analytics-service over gRPC.
+5. Later the owner asks the gateway for the statistics; the gateway makes **one** gRPC call to analytics-service, which checks the
+   owner from its own copy and returns the count. url-service is not involved.
+
+## What happens when a link is created (transactional outbox)
+
+1. `POST /api/v1/links`: url-service saves the link **and** a `LinkCreated` row in its `outbox_events` table in **one database transaction**, then answers `201`.
+2. A background relay in url-service reads unsent rows (`FOR UPDATE SKIP LOCKED`), publishes them to the topic `clicktrail.link-created.v1`, waits for Kafka's
+   confirmation and only then marks them as sent. If Kafka is down the rows wait, and are sent when it is back.
+3. analytics-service consumes the event and stores `shortCode -> ownerUserId` (idempotent: the short code is the `_id`).
+4. From now on the owner can see the link's statistics. For a moment after creation the statistics endpoint may answer `404` (eventual consistency).
+
+See [ADR 0007](adr/0007-outbox-and-owner-read-model.md).
 
 ## Security design
 
@@ -99,7 +112,8 @@ A service never reads another service's database. It asks the service over its A
 | Failure | Behaviour |
 |---|---|
 | Redis down | Redirects still work (database); rate limiter fails open |
-| Kafka down | Redirects still work; click events are lost while it is down (best effort) |
+| Kafka down | Redirects still work; click events are lost while it is down (best effort). **Creating links works too**: the `LinkCreated` event waits in the outbox table and is sent when Kafka is back (`outbox_pending_events` grows meanwhile) |
+| url-service down | Link APIs and redirects fail, but **statistics keep working** (analytics has its own copy of the owners) |
 | MongoDB down | Consumer retries with backoff; nothing is acknowledged until stored; lag grows and is visible |
 | A service down | The first failures get a `502` with a trace ID. After 5 failures in a row the gateway **opens that service's circuit breaker** for 10 seconds: calls are refused at once with `503` and a `Retry-After` header, and the service is left alone to recover. Other services and routes keep working (one breaker per service). Safe reads are retried once with jitter first; writes never |
 | A message is delivered twice | Stored once (event ID is the MongoDB `_id`) |
@@ -110,7 +124,9 @@ A service never reads another service's database. It asks the service over its A
   (Amazon RDS, DocumentDB/Atlas, ElastiCache, MSK) with backups.
 - **No TLS** between services and none on the public port in this version. Put a load balancer or reverse proxy with a certificate in front.
 - **Shared-secret JWT (HS256)** and no refresh tokens or revocation; see the ADRs in the gateway and auth repos.
-- **Click delivery from url-service to Kafka is best effort.** An outbox table would make it exact.
+- **Click delivery from url-service to Kafka is best effort.** Link-created events use the transactional outbox (exact, at-least-once); clicks could use it too, at the price of a database write per redirect.
+- **The outbox table is never cleaned**; a job that deletes sent rows older than some days is not built yet.
+- **Link owners cannot change or be deleted** in this product. A feature that does so would need `LinkOwnerChanged` / `LinkDeleted` events for the read model.
 - **Counting scans documents** (indexed); pre-aggregated counters would be needed at large scale.
 - **Duplicated small pieces of code** across services (middleware, config helpers). In a larger organisation they would live in a shared library.
 - **NetworkPolicies** need a network plugin that enforces them; the default `kind` plugin does not.

@@ -121,11 +121,11 @@
                                        {
                                            "refId":  "A",
                                            "expr":  "kafka_consumer_lag_messages",
-                                           "legendFormat":  "messages waiting",
                                            "datasource":  {
                                                               "type":  "prometheus",
                                                               "uid":  "prometheus"
-                                                          }
+                                                          },
+                                           "legendFormat":  "{{topic}}"
                                        }
                                    ],
                        "fieldConfig":  {
@@ -446,6 +446,120 @@
                                            "refId":  "B",
                                            "expr":  "sum by (name) (rate(upstream_retries_total[1m]))",
                                            "legendFormat":  "retries {{name}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  13,
+                       "title":  "Outbox: events waiting to be sent",
+                       "type":  "timeseries",
+                       "description":  "Link events saved in the database but not yet delivered to Kafka. Normally 0 or close to it. Growing = Kafka (or the relay) has a problem; the events are safe in the table and are sent when Kafka is back.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  44,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "outbox_pending_events",
+                                           "legendFormat":  "waiting",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "short"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  14,
+                       "title":  "Outbox: events sent to Kafka",
+                       "type":  "timeseries",
+                       "description":  "Delivered events per second by topic, and rounds in which delivery failed.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  12,
+                                       "y":  44,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (topic) (rate(outbox_events_published_total[1m]))",
+                                           "legendFormat":  "sent {{topic}}",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       },
+                                       {
+                                           "refId":  "B",
+                                           "expr":  "rate(outbox_publish_failures_total[1m])",
+                                           "legendFormat":  "failed rounds",
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "prometheus"
+                                                          }
+                                       }
+                                   ],
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "unit":  "ops"
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       }
+                   },
+                   {
+                       "id":  15,
+                       "title":  "Link-created events consumed (analytics)",
+                       "type":  "timeseries",
+                       "description":  "LinkCreated events read by the analytics service, which uses them to know who owns which link.",
+                       "datasource":  {
+                                          "type":  "prometheus",
+                                          "uid":  "prometheus"
+                                      },
+                       "gridPos":  {
+                                       "x":  0,
+                                       "y":  52,
+                                       "w":  12,
+                                       "h":  8
+                                   },
+                       "targets":  [
+                                       {
+                                           "refId":  "A",
+                                           "expr":  "sum by (result) (rate(analytics_links_processed_total[1m]))",
+                                           "legendFormat":  "{{result}}",
                                            "datasource":  {
                                                               "type":  "prometheus",
                                                               "uid":  "prometheus"

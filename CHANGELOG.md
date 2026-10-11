@@ -4,6 +4,16 @@ All notable changes are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com) and the project uses
 [Semantic Versioning](https://semver.org).
 
+## [0.3.0] - 2026-10-12
+
+### Added
+- Transactional outbox for the `LinkCreated` event and a link-owner read model in analytics (ADR 0007). New Kafka topic `clicktrail.link-created.v1` (created by `kafka-init` / the Kubernetes job).
+- Grafana panels for the outbox (events waiting, events sent, failed rounds) and for consumed link events; the lag panel is split by topic.
+- Runbook entries for the outbox.
+
+### Changed
+- Statistics no longer depend on url-service. Architecture and interview guide updated.
+
 ## [0.2.1] - 2026-10-11
 
 ### Added
