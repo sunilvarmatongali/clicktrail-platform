@@ -1,0 +1,239 @@
+# The complete ClickTrail stack on one machine (a laptop or one VM).
+#
+#   cd compose && cp .env.example .env     (then fill in the secrets, or run scripts/aws/bootstrap-ec2.sh)
+#   docker compose up -d
+#
+# Only ONE port is public: the gateway (8080). Grafana and Prometheus listen on 127.0.0.1 only
+# (reach them through an SSH tunnel). Everything else is reachable only inside the "clicktrail" network.
+name: clicktrail
+
+# Settings shared by the four Go services. Least privilege: no root, no writes to the image, no extra rights.
+x-go-service: &go-service
+  restart: unless-stopped
+  networks: [clicktrail]
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  # ---------------------------------------------------------------- application services
+  gateway:
+    <<: *go-service
+    image: ghcr.io/${GITHUB_OWNER:?set GITHUB_OWNER in .env}/clicktrail-gateway:${CLICKTRAIL_VERSION:?set CLICKTRAIL_VERSION in .env}
+    ports:
+      - "8080:8080" # the only public port
+    environment:
+      GATEWAY_HTTP_PORT: "8080"
+      GATEWAY_OPS_PORT: "8090"
+      GATEWAY_AUTH_SERVICE_URL: http://auth-service:8081
+      GATEWAY_URL_SERVICE_URL: http://url-service:8082
+      GATEWAY_ANALYTICS_GRPC_ADDRESS: analytics-service:9083
+      GATEWAY_REDIS_ADDRESS: redis:6379
+      GATEWAY_JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    depends_on:
+      redis: { condition: service_healthy }
+      auth-service: { condition: service_healthy }
+      url-service: { condition: service_healthy }
+      analytics-service: { condition: service_healthy }
+    mem_limit: 128m
+
+  auth-service:
+    <<: *go-service
+    image: ghcr.io/${GITHUB_OWNER}/clicktrail-auth-service:${CLICKTRAIL_VERSION}
+    environment:
+      AUTH_HTTP_PORT: "8081"
+      AUTH_DATABASE_DSN: clicktrail:${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}@tcp(mysql:3306)/auth?charset=utf8mb4&parseTime=True&loc=UTC
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      AUTH_ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL in .env}
+      AUTH_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+    depends_on:
+      mysql: { condition: service_healthy }
+    mem_limit: 128m
+
+  url-service:
+    <<: *go-service
+    image: ghcr.io/${GITHUB_OWNER}/clicktrail-url-service:${CLICKTRAIL_VERSION}
+    environment:
+      URL_HTTP_PORT: "8082"
+      URL_DATABASE_DSN: host=postgres user=clicktrail password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env} dbname=links port=5432 sslmode=disable TimeZone=UTC
+      URL_REDIS_ADDRESS: redis:6379
+      URL_KAFKA_BROKERS: kafka:9092
+      URL_KAFKA_TOPIC: clicktrail.link-clicked.v1
+      URL_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    mem_limit: 128m
+
+  analytics-service:
+    <<: *go-service
+    image: ghcr.io/${GITHUB_OWNER}/clicktrail-analytics-service:${CLICKTRAIL_VERSION}
+    environment:
+      ANALYTICS_HTTP_PORT: "8083"
+      ANALYTICS_GRPC_PORT: "9083"
+      ANALYTICS_MONGODB_URI: mongodb://mongo:27017
+      ANALYTICS_KAFKA_BROKERS: kafka:9092
+      ANALYTICS_KAFKA_TOPIC: clicktrail.link-clicked.v1
+    depends_on:
+      mongo: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    mem_limit: 128m
+
+  # ---------------------------------------------------------------- data stores (one instance each: demo setup)
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    networks: [clicktrail]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: auth
+      MYSQL_USER: clicktrail
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command: ["--innodb-buffer-pool-size=64M", "--performance-schema=OFF", "--max-connections=50"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: 512m
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    networks: [clicktrail]
+    environment:
+      POSTGRES_DB: links
+      POSTGRES_USER: clicktrail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=50"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clicktrail -d links"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 256m
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    networks: [clicktrail]
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    mem_limit: 512m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [clicktrail]
+    # Redis only holds a cache and rate-limit counters, so losing them is harmless: no persistence, bounded memory.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: 128m
+
+  kafka:
+    image: apache/kafka:3.9.0
+    restart: unless-stopped
+    networks: [clicktrail]
+    environment:
+      # Single node in KRaft mode (no ZooKeeper): the same process is broker and controller.
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_HEAP_OPTS: -Xms384m -Xmx384m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 40s
+    mem_limit: 768m
+
+  # Creates the topic once, so it exists with the right settings before any service uses it.
+  kafka-init:
+    image: apache/kafka:3.9.0
+    restart: "no"
+    networks: [clicktrail]
+    depends_on:
+      kafka: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic clicktrail.link-clicked.v1 --partitions 3 --replication-factor 1
+    mem_limit: 256m
+
+  # ---------------------------------------------------------------- observability
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    networks: [clicktrail]
+    ports:
+      - "127.0.0.1:9090:9090" # local only
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    mem_limit: 256m
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    restart: unless-stopped
+    networks: [clicktrail]
+    ports:
+      - "127.0.0.1:3000:3000" # local only
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    mem_limit: 256m
+
+networks:
+  clicktrail:
+    name: clicktrail
+
+volumes:
+  mysql-data:
+  postgres-data:
+  mongo-data:
+  kafka-data:
+  prometheus-data:
+  grafana-data:
