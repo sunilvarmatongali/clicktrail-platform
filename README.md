@@ -23,7 +23,6 @@ containers, CI/CD, AWS deployment and monitoring.
 | Messaging | **Apache Kafka** (KRaft), at-least-once delivery with idempotent consumers |
 | Resilience | Circuit breaker (`sony/gobreaker`), retries with jitter, timeouts, graceful shutdown, health and readiness probes |
 | Containers | **Docker** (multi-stage, non-root, read-only filesystem), **Docker Compose** |
-| Orchestration | **Kubernetes** manifests (Kustomize, validated with `kubeconform`; `kind` for local runs) |
 | Cloud | **AWS**: EC2, Systems Manager (SSM), Secrets Manager, S3, IAM with GitHub OIDC, Elastic IP |
 | CI/CD | **GitHub Actions**: lint, tests, vulnerability scan, secret scan, image build, release by tag, manual deploy with no stored credentials |
 | Observability | **Prometheus** and **Grafana** (15-panel dashboard), request IDs across services |
@@ -86,7 +85,7 @@ Only the **gateway** is reachable from the internet. Every service owns its own 
 | `clicktrail-url-service` | Create and resolve short links, cache, publish events | Go, Gin, GORM, PostgreSQL, Redis, Kafka |
 | `clicktrail-analytics-service` | Store clicks, keep a copy of link owners, serve counts | Go, Kafka consumer, MongoDB, gRPC server |
 | `clicktrail-proto` | The gRPC contract (public repository) | Protocol Buffers, `buf` |
-| `clicktrail-platform` | This repository | Compose, Kubernetes, Prometheus, Grafana, AWS scripts, docs |
+| `clicktrail-platform` | This repository | Compose, Prometheus, Grafana, AWS scripts, docs |
 
 ## How it works
 
@@ -151,7 +150,6 @@ These behaviours are covered by unit tests, and the circuit breaker and the outb
 ## Honest limitations
 
 This is a demonstration, not a production system. There is a single instance of each data store, no TLS on the public port, and one environment.
-The Kubernetes manifests are validated but have not been run on a cluster, and clicks use best-effort publishing.
 The full list is in [docs/architecture.md](docs/architecture.md#known-limitations-honest-list).
 
 ## Start here
@@ -160,7 +158,7 @@ The full list is in [docs/architecture.md](docs/architecture.md#known-limitation
 |---|---|
 | understand what the product does | [docs/product-brief.md](docs/product-brief.md) |
 | see how the pieces fit together | [docs/architecture.md](docs/architecture.md) |
-| run it (Docker, Kubernetes, AWS) | [docs/runbook.md](docs/runbook.md) |
+| run it (Docker, AWS) | [docs/runbook.md](docs/runbook.md) |
 | set up the AWS deployment | [docs/aws-deploy-setup.md](docs/aws-deploy-setup.md) |
 | understand why a decision was made | [docs/adr/](docs/adr/) |
 
@@ -188,7 +186,6 @@ Then open Grafana at http://localhost:3000 and look at the **ClickTrail Overview
 
 ```
 compose/            Docker Compose stack (all services, data stores, Prometheus, Grafana)
-k8s/                Kubernetes manifests (Kustomize) and a kind cluster config
 observability/      Prometheus config and the Grafana dashboard
 scripts/            smoke-test.sh, aws/ (EC2 setup and deploy), k8s/ (kind deploy)
 docs/               product brief, architecture, runbook, setup guide, decision records (ADRs)
